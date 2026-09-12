@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from autonomous_sre.config import get_settings
 from autonomous_sre.database import (
     get_incident,
     init_db,
@@ -16,7 +17,7 @@ from autonomous_sre.events import connect_nats, publish
 from autonomous_sre.models import IncidentStatus
 from autonomous_sre.tokens import verify_approval_token
 
-app = FastAPI(title="Autonomous-SRE API", version="0.1.0")
+app = FastAPI(title="Autonomous-SRE API", version="0.2.0")
 nc = None
 
 
@@ -42,6 +43,18 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/v1/system")
+async def system() -> dict[str, object]:
+    settings = get_settings()
+    return {
+        "environment": settings.environment,
+        "mode": settings.auto_remediation_mode,
+        "poll_interval_seconds": settings.incident_poll_interval_seconds,
+        "mail_enabled": bool(settings.smtp_username and settings.smtp_password and settings.alert_email),
+        "report_recipient": settings.alert_email if settings.alert_email else None,
+    }
+
+
 @app.get("/api/v1/agents")
 async def agents() -> list[dict[str, object]]:
     return await list_agent_statuses()
@@ -63,6 +76,39 @@ async def incident(incident_id: UUID) -> dict[str, object]:
     if item is None:
         raise HTTPException(404, "incident not found")
     return item.model_dump(mode="json")
+
+
+@app.get("/api/v1/incidents/{incident_id}/report")
+async def incident_report(incident_id: UUID) -> dict[str, object]:
+    item = await get_incident(incident_id)
+    if item is None:
+        raise HTTPException(404, "incident not found")
+
+    incident_activity = [
+        event
+        for event in await list_agent_activity()
+        if str(event.get("incident_id") or "") == str(item.id)
+    ]
+    payload = item.model_dump(mode="json")
+    started = item.created_at
+    finished = item.updated_at
+    duration_seconds = max(0, int((finished - started).total_seconds()))
+
+    return {
+        "report_type": "autonomous-sre-intervention",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "incident_id": str(item.id),
+        "status": item.status.value,
+        "started_at": started.isoformat(),
+        "finished_at": finished.isoformat(),
+        "duration_seconds": duration_seconds,
+        "alert": payload.get("evidence", {}),
+        "diagnosis": payload.get("diagnosis"),
+        "plan": payload.get("plan"),
+        "policy": payload.get("policy"),
+        "remediation_result": payload.get("remediation_result"),
+        "timeline": incident_activity,
+    }
 
 
 @app.post("/api/v1/incidents/{incident_id}/approve")
