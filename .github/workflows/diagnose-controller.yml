@@ -27,9 +27,17 @@ jobs:
       SCW_ZONE: ${{ vars.SCW_ZONE }}
       OPERATOR_CIDR: ${{ vars.OPERATOR_CIDR }}
       RUNNER_CIDR: ${{ vars.RUNNER_CIDR }}
+      ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
       CONTROL_PLANE_TYPE: ${{ vars.CONTROL_PLANE_TYPE }}
       WORKER_TYPE: ${{ vars.WORKER_TYPE }}
       WORKER_COUNT: ${{ vars.WORKER_COUNT }}
+      RUNNER_TYPE: DEV1-S
+      AUTO_REMEDIATION_MODE: ${{ vars.AUTO_REMEDIATION_MODE }}
+      OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL }}
+      SMTP_SMARTHOST: ${{ vars.SMTP_SMARTHOST }}
+      SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+      LETSENCRYPT_EMAIL: ${{ vars.LETSENCRYPT_EMAIL }}
     steps:
       - uses: actions/checkout@v7
       - uses: opentofu/setup-opentofu@v2.0.2
@@ -39,6 +47,10 @@ jobs:
       - name: Prepare cluster access
         env:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          APPROVAL_SIGNING_KEY: ${{ secrets.APPROVAL_SIGNING_KEY }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         run: |
           mkdir -p config "${{ runner.temp }}/ssh"
           printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "${{ runner.temp }}/ssh/deploy_key"
@@ -50,10 +62,25 @@ jobs:
           SCW_ZONE=$SCW_ZONE
           OPERATOR_CIDR=$OPERATOR_CIDR
           RUNNER_CIDR=$RUNNER_CIDR
+          ALERT_EMAIL=$ALERT_EMAIL
+          GITHUB_REPOSITORY=$GITHUB_REPOSITORY
           CONTROL_PLANE_TYPE=$CONTROL_PLANE_TYPE
           WORKER_TYPE=$WORKER_TYPE
           WORKER_COUNT=$WORKER_COUNT
+          RUNNER_TYPE=$RUNNER_TYPE
+          AUTO_REMEDIATION_MODE=$AUTO_REMEDIATION_MODE
+          OLLAMA_MODEL=$OLLAMA_MODEL
+          SMTP_SMARTHOST=$SMTP_SMARTHOST
+          SMTP_USERNAME=$SMTP_USERNAME
+          LETSENCRYPT_EMAIL=$LETSENCRYPT_EMAIL
           EOF
+          cat > config/secrets.env <<EOF
+          SMTP_PASSWORD=$SMTP_PASSWORD
+          APPROVAL_SIGNING_KEY=$APPROVAL_SIGNING_KEY
+          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+          GHCR_PULL_TOKEN=$GHCR_PULL_TOKEN
+          EOF
+          chmod 0600 config/secrets.env
           ./scripts/install-deploy-tools.sh >/dev/null
           export PATH="$PWD/.deploy-venv/bin:$PATH"
           ./scripts/bootstrap-state.sh >/dev/null
