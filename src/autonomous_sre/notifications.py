@@ -9,21 +9,45 @@ from autonomous_sre.models import Incident
 from autonomous_sre.tokens import create_approval_token
 
 
+def _format_duration(seconds: int) -> str:
+    minutes, seconds = divmod(max(0, seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
 async def send_incident_email(incident: Incident, subject_prefix: str) -> None:
     settings = get_settings()
-    if not settings.smtp_password or not settings.smtp_username:
+    if not settings.smtp_password or not settings.smtp_username or not settings.alert_email:
         return
 
     token = create_approval_token(incident.id)
     link = f"{settings.dashboard_base_url}/incidents/{incident.id}#token={token}"
     plan = incident.plan
     diagnosis = incident.diagnosis
+    policy = incident.policy
+    result = incident.remediation_result or {}
+    duration = int((incident.updated_at - incident.created_at).total_seconds())
 
     body = [
-        f"Incident: {incident.id}",
+        "AUTONOMOUS SRE - INTERVENTION REPORT",
+        "",
+        f"Incident ID: {incident.id}",
         f"Status: {incident.status.value}",
+        f"Started: {incident.created_at.isoformat()}",
+        f"Last update: {incident.updated_at.isoformat()}",
+        f"Duration: {_format_duration(duration)}",
+        "",
+        "DIAGNOSIS",
         f"Root cause: {diagnosis.probable_cause if diagnosis else 'pending'}",
+        f"Confidence: {round((diagnosis.confidence if diagnosis else 0) * 100)}%",
+        "",
+        "REMEDIATION",
     ]
+
     if plan:
         body.extend(
             [
@@ -32,10 +56,34 @@ async def send_incident_email(incident: Incident, subject_prefix: str) -> None:
                 f"Target: {plan.namespace}/{plan.target_name}",
             ]
         )
-    if incident.status.value == "pending_approval":
-        body.extend(["", "Review and approve/reject:", link])
     else:
-        body.extend(["", "Dashboard:", settings.dashboard_base_url])
+        body.append("Action: none")
+
+    body.extend(
+        [
+            "",
+            "POLICY",
+            f"Decision: {policy.result.value if policy else 'pending'}",
+            f"Reason: {policy.reason if policy else 'pending'}",
+            "",
+            "RESULT",
+            f"Success: {result.get('success', 'pending')}",
+            f"Message: {result.get('message', 'pending')}",
+        ]
+    )
+
+    if incident.status.value == "pending_approval":
+        body.extend(["", "ACTION REQUIRED", "Review and approve/reject:", link])
+    else:
+        body.extend(
+            [
+                "",
+                "FULL INCIDENT VIEW",
+                f"{settings.dashboard_base_url}/incidents/{incident.id}",
+                "",
+                "This report was generated automatically by Autonomous-SRE.",
+            ]
+        )
 
     msg = EmailMessage()
     msg["Subject"] = f"[Autonomous-SRE] {subject_prefix} {incident.id}"
