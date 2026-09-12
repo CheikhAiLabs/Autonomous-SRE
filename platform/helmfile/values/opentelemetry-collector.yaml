@@ -1,6 +1,12 @@
 mode: daemonset
 image:
   repository: otel/opentelemetry-collector-contrib
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
 presets:
   logsCollection:
     enabled: true
@@ -11,19 +17,19 @@ presets:
     enabled: true
 config:
   exporters:
-    otlphttp/tempo:
+    otlp_http/tempo:
       endpoint: http://tempo.observability.svc:4318
-    otlphttp/loki:
+    otlp_http/loki:
       endpoint: http://loki.observability.svc:3100/otlp
     debug:
       verbosity: basic
   service:
     pipelines:
       logs:
-        receivers: [filelog]
-        processors: [k8sattributes, batch]
-        exporters: [otlphttp/loki]
+        receivers: [file_log]
+        processors: [k8s_attributes, batch]
+        exporters: [otlp_http/loki]
       traces:
         receivers: [otlp]
-        processors: [k8sattributes, batch]
-        exporters: [otlphttp/tempo]
+        processors: [k8s_attributes, batch]
+        exporters: [otlp_http/tempo]

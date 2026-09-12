@@ -50,7 +50,7 @@ spec:
         - name: api
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities: {{drop: ["ALL"]}}
+            capabilities: {drop: ["ALL"]}
           image: ${IMAGE_PREFIX}/sre-api:${IMAGE_TAG}
           imagePullPolicy: Always
           ports:
@@ -106,7 +106,7 @@ spec:
         - name: worker
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities: {{drop: ["ALL"]}}
+            capabilities: {drop: ["ALL"]}
           image: ${IMAGE_PREFIX}/sre-worker:${IMAGE_TAG}
           imagePullPolicy: Always
           envFrom:
@@ -147,7 +147,7 @@ spec:
         - name: controller
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities: {{drop: ["ALL"]}}
+            capabilities: {drop: ["ALL"]}
           image: ${IMAGE_PREFIX}/remediation-controller:${IMAGE_TAG}
           imagePullPolicy: Always
           envFrom:
@@ -178,7 +178,7 @@ spec:
         - name: dashboard
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities: {{drop: ["ALL"]}}
+            capabilities: {drop: ["ALL"]}
           image: ${IMAGE_PREFIX}/dashboard:${IMAGE_TAG}
           imagePullPolicy: Always
           ports:
