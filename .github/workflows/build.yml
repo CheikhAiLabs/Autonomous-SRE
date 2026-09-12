@@ -81,7 +81,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0.24.0
+        uses: anchore/sbom-action@v0.24.2
         with:
           image: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
           format: spdx-json
