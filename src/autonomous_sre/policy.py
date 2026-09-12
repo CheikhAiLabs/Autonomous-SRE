@@ -9,10 +9,14 @@ class PolicyClient:
         self.settings = get_settings()
         self.client = httpx.AsyncClient(base_url=self.settings.opa_url, timeout=10.0)
 
-    async def decide(self, plan: RemediationPlan) -> PolicyDecision:
+    async def decide(
+        self,
+        plan: RemediationPlan,
+        mode: str | None = None,
+    ) -> PolicyDecision:
         payload = {
             "input": {
-                "mode": self.settings.auto_remediation_mode,
+                "mode": mode or self.settings.auto_remediation_mode,
                 "action": plan.action,
                 "risk": plan.risk.value,
                 "namespace": plan.namespace,
