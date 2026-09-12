@@ -11,7 +11,8 @@ spec:
     - target: admission.k8s.gatekeeper.sh
       rego: |
         package k8srequiredrunasnonroot
-        violation[{"msg": msg}] {
+
+        violation contains {"msg": msg} if {
           input.review.object.kind == "Pod"
           not input.review.object.spec.securityContext.runAsNonRoot
           msg := "Pod should set spec.securityContext.runAsNonRoot=true"
