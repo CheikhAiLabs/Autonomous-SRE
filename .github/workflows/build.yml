@@ -72,13 +72,17 @@ jobs:
 
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_DETECTION_PRIORITY: precise
         with:
+          version: v0.74.0
           image-ref: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
           scanners: vuln
           format: table
           exit-code: '1'
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          skip-files: '**/*.spdx,**/*.spdx.json,**/*.cdx,**/*.cdx.json'
 
       - name: Generate SBOM
         uses: anchore/sbom-action@v0.24.0
