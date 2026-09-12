@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import JSON, DateTime, String, Text, select
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from autonomous_sre.config import get_settings
@@ -121,7 +121,7 @@ async def find_active_by_fingerprint(fingerprint: str) -> Incident | None:
 
 
 async def find_recent_by_fingerprint(fingerprint: str, cooldown_seconds: int) -> Incident | None:
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=cooldown_seconds)
+    cutoff = datetime.now(UTC) - timedelta(seconds=cooldown_seconds)
     async with SessionLocal() as session:
         result = await session.execute(
             select(IncidentRow)
