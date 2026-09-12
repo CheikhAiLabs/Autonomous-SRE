@@ -92,7 +92,49 @@ jobs:
           output-file: sbom-${{ matrix.name }}.spdx.json
           upload-artifact: true
 
-      - uses: sigstore/cosign-installer@v4.1.2
+      - name: Install Cosign
+        id: cosign-installer
+        continue-on-error: true
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: v3.0.6
+
+      - name: Ensure Cosign is available
+        if: steps.cosign-installer.outcome != 'success'
+        shell: bash
+        env:
+          COSIGN_VERSION: v3.0.6
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          asset="cosign-linux-amd64"
+          base="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}"
+
+          download_ok=false
+          for attempt in $(seq 1 10); do
+            echo "Cosign fallback download attempt ${attempt}/10"
+            if curl -fL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 120 \
+              "${base}/${asset}" -o "$RUNNER_TEMP/bin/cosign" \
+              && curl -fL --retry 3 --retry-all-errors --connect-timeout 10 --max-time 120 \
+              "${base}/cosign_checksums.txt" -o "$RUNNER_TEMP/cosign_checksums.txt"; then
+              expected="$(awk -v f="$asset" '$2 == f {print $1}' "$RUNNER_TEMP/cosign_checksums.txt")"
+              actual="$(sha256sum "$RUNNER_TEMP/bin/cosign" | awk '{print $1}')"
+              if [ -n "$expected" ] && [ "$expected" = "$actual" ]; then
+                chmod +x "$RUNNER_TEMP/bin/cosign"
+                download_ok=true
+                break
+              fi
+            fi
+            sleep $((attempt * 2))
+          done
+
+          if [ "$download_ok" != true ]; then
+            echo "Release download unavailable; falling back to verified Go module installation."
+            GOBIN="$RUNNER_TEMP/bin" go install github.com/sigstore/cosign/v3/cmd/cosign@${COSIGN_VERSION}
+          fi
+
+          "$RUNNER_TEMP/bin/cosign" version
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Sign image with keyless Cosign
         env:
