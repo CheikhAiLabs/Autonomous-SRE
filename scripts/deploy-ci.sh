@@ -100,9 +100,17 @@ kubectl apply -f "$MANIFESTS/00-namespaces.yaml"
 kubectl apply -f "$MANIFESTS/gatekeeper-baseline.yaml"
 
 GATEKEEPER_TEMPLATE="k8srequiredrunasnonroot"
-GATEKEEPER_CRD="k8srequiredrunasnonroots.constraints.gatekeeper.sh"
+GATEKEEPER_KIND="K8sRequiredRunAsNonRoot"
+GATEKEEPER_CRD=""
+
 for attempt in $(seq 1 60); do
-  if kubectl get crd "$GATEKEEPER_CRD" >/dev/null 2>&1; then
+  GATEKEEPER_CRD="$(
+    kubectl get crd -o json 2>/dev/null \
+      | jq -r --arg kind "$GATEKEEPER_KIND" '.items[] | select(.spec.names.kind == $kind) | .metadata.name' \
+      | head -n1
+  )"
+
+  if [ -n "$GATEKEEPER_CRD" ]; then
     break
   fi
 
@@ -113,16 +121,22 @@ for attempt in $(seq 1 60); do
     exit 1
   fi
 
+  if [ -n "$template_json" ] && printf '%s' "$template_json" | jq -e '.status.created == true' >/dev/null 2>&1; then
+    echo "Gatekeeper reports the template as created; discovering generated CRD..."
+  fi
+
   wait_progress "Waiting for Gatekeeper constraint CRD" "$attempt" 60
   sleep 2
 done
 
-if ! kubectl get crd "$GATEKEEPER_CRD" >/dev/null 2>&1; then
-  echo "Gatekeeper constraint CRD was not generated: $GATEKEEPER_CRD" >&2
+if [ -z "$GATEKEEPER_CRD" ]; then
+  echo "Gatekeeper created the template but the generated CRD for kind $GATEKEEPER_KIND could not be discovered." >&2
   kubectl get constrainttemplate "$GATEKEEPER_TEMPLATE" -o yaml >&2 || true
+  kubectl get crd -o custom-columns='NAME:.metadata.name,KIND:.spec.names.kind' | grep -i 'gatekeeper\|requiredrunasnonroot' >&2 || true
   exit 1
 fi
 
+echo "Gatekeeper constraint CRD discovered: $GATEKEEPER_CRD"
 kubectl wait --for=condition=Established "crd/$GATEKEEPER_CRD" --timeout=2m
 kubectl apply -f "$MANIFESTS/gatekeeper-constraint.yaml"
 
