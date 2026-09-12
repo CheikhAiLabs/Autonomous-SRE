@@ -90,7 +90,38 @@ progress 75 "Installing platform services"
 
 progress 85 "Rendering and applying Autonomous-SRE manifests"
 "$ROOT/scripts/render-manifests.sh"
-kubectl apply -f "$GENERATED/manifests"
+
+MANIFESTS="$GENERATED/manifests"
+
+# Apply prerequisites deterministically. Gatekeeper creates the constraint CRD
+# asynchronously after the ConstraintTemplate is accepted, so the constraint
+# must not be submitted in the same bulk apply.
+kubectl apply -f "$MANIFESTS/00-namespaces.yaml"
+kubectl apply -f "$MANIFESTS/gatekeeper-baseline.yaml"
+
+GATEKEEPER_CRD="k8srequiredrunasnonroots.constraints.gatekeeper.sh"
+for attempt in $(seq 1 60); do
+  if kubectl get crd "$GATEKEEPER_CRD" >/dev/null 2>&1; then
+    break
+  fi
+  wait_progress "Waiting for Gatekeeper constraint CRD" "$attempt" 60
+  sleep 2
+done
+kubectl get crd "$GATEKEEPER_CRD" >/dev/null
+kubectl wait --for=condition=Established "crd/$GATEKEEPER_CRD" --timeout=2m
+kubectl apply -f "$MANIFESTS/gatekeeper-constraint.yaml"
+
+# Apply all remaining manifests one file at a time so failures are explicit
+# and ordering is reproducible across local and GitHub-hosted executions.
+for manifest in "$MANIFESTS"/*.yaml; do
+  case "$(basename "$manifest")" in
+    00-namespaces.yaml|gatekeeper-baseline.yaml|gatekeeper-constraint.yaml)
+      continue
+      ;;
+  esac
+  echo "Applying $(basename "$manifest")"
+  kubectl apply -f "$manifest"
+done
 
 progress 92 "Initializing local AI model"
 "$ROOT/scripts/initialize-model.sh"
