@@ -76,9 +76,11 @@ spec:
       rules:
         - alert: DemoServiceHigh5xxRate
           expr: |
-            sum(rate(sre_demo_requests_total{status=~"5.."}[30s]))
-            /
-            clamp_min(sum(rate(sre_demo_requests_total[30s])), 0.001) > 0.20
+            (
+              sum(rate(sre_demo_requests_total{status=~"5.."}[30s]))
+              /
+              clamp_min(sum(rate(sre_demo_requests_total[30s])), 0.001)
+            ) > 0.20
           for: 20s
           labels:
             severity: critical
@@ -88,12 +90,12 @@ spec:
           annotations:
             summary: "Demo service error rate exceeded 20% after a release"
             description: "The golden-path workload is returning a sustained high rate of HTTP 5xx responses."
-            sre.action: rollback_deployment
-            sre.risk: low
-            sre.target_namespace: demo
-            sre.target_kind: Deployment
-            sre.target_name: demo-service
-            sre.blast_radius: "1"
-            sre.verify_query: >-
+            sre_action: rollback_deployment
+            sre_risk: low
+            sre_target_namespace: demo
+            sre_target_kind: Deployment
+            sre_target_name: demo-service
+            sre_blast_radius: "1"
+            sre_verify_query: >-
               sum(rate(sre_demo_requests_total{status=~"5.."}[30s])) / clamp_min(sum(rate(sre_demo_requests_total[30s])), 0.001)
-            sre.verify_threshold: "0.10"
+            sre_verify_threshold: "0.10"
