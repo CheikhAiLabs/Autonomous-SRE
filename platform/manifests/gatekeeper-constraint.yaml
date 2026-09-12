@@ -1,0 +1,11 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredRunAsNonRoot
+metadata:
+  name: audit-run-as-non-root
+spec:
+  enforcementAction: dryrun
+  match:
+    namespaces: ["sre-system", "demo"]
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
