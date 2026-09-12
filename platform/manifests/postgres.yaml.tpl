@@ -27,6 +27,7 @@ spec:
           env:
             - {name: POSTGRES_DB, value: autonomous_sre}
             - {name: POSTGRES_USER, value: autonomous_sre}
+            - {name: PGDATA, value: /var/lib/postgresql/18/docker}
             - name: POSTGRES_PASSWORD
               valueFrom: {secretKeyRef: {name: postgres-secret, key: POSTGRES_PASSWORD}}
           ports:
@@ -36,7 +37,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
           volumeMounts:
-            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: data, mountPath: /var/lib/postgresql}
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {memory: 1Gi}
