@@ -93,3 +93,38 @@ spec:
             sre_blast_radius: "1"
             sre_verify_query: 'sum(rate(sre_demo_requests_total{status=~"5.."}[1m])) / sum(rate(sre_demo_requests_total[1m]))'
             sre_verify_threshold: "0.10"
+
+        - alert: DemoServiceReplicaFloorBreached
+          expr: kube_deployment_spec_replicas{namespace="demo",deployment="demo-service"} < 2
+          for: 30s
+          labels:
+            severity: warning
+            sre_managed: "true"
+            namespace: demo
+            deployment: demo-service
+          annotations:
+            summary: "Demo service replica count is below the production floor"
+            description: "The deployment has remained below the required two replicas for at least 30 seconds."
+            sre_action: "scale_deployment"
+            sre_target_namespace: "demo"
+            sre_target_kind: "Deployment"
+            sre_target_name: "demo-service"
+            sre_replicas: "2"
+            sre_blast_radius: "1"
+
+        - alert: DemoServiceSustainedUnavailableReplica
+          expr: kube_deployment_status_replicas_available{namespace="demo",deployment="demo-service"} < kube_deployment_spec_replicas{namespace="demo",deployment="demo-service"}
+          for: 45s
+          labels:
+            severity: warning
+            sre_managed: "true"
+            namespace: demo
+            deployment: demo-service
+          annotations:
+            summary: "Demo service has a sustained unavailable replica"
+            description: "The deployment has failed to recover its desired availability for at least 45 seconds."
+            sre_action: "restart_deployment"
+            sre_target_namespace: "demo"
+            sre_target_kind: "Deployment"
+            sre_target_name: "demo-service"
+            sre_blast_radius: "1"
