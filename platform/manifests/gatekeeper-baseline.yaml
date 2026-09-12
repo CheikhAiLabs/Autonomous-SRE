@@ -12,7 +12,7 @@ spec:
       rego: |
         package k8srequiredrunasnonroot
 
-        violation contains {"msg": msg} if {
+        violation[{"msg": msg}] {
           input.review.object.kind == "Pod"
           not input.review.object.spec.securityContext.runAsNonRoot
           msg := "Pod should set spec.securityContext.runAsNonRoot=true"
