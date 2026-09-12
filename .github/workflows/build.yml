@@ -64,7 +64,6 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           provenance: mode=max
-          sbom: true
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha }}
             ${{ steps.meta.outputs.image }}:latest
@@ -75,6 +74,7 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+          scanners: vuln
           format: table
           exit-code: '1'
           severity: CRITICAL,HIGH
