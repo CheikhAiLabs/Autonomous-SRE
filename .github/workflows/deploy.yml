@@ -59,6 +59,7 @@ jobs:
       - uses: opentofu/setup-opentofu@v2.0.2
         with:
           tofu_version: 1.12.6
+          tofu_wrapper: false
 
       - name: Prepare SSH key and portable config
         shell: bash
