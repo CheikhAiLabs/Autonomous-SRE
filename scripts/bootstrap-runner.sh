@@ -35,16 +35,20 @@ RUNNER_IP="$(tofu -chdir="$ROOT/infrastructure/opentofu-runner" output -raw runn
 RUNNER_CIDR="${RUNNER_IP}/32"
 
 echo "Waiting for runner SSH: $RUNNER_IP"
-for _ in $(seq 1 60); do
-  if ssh -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@"$RUNNER_IP" true 2>/dev/null; then break; fi
+for attempt in $(seq 1 60); do
+  wait_progress "Waiting for runner SSH" "$attempt" 60
+  if ssh -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 root@"$RUNNER_IP" true 2>/dev/null; then
+    [ -t 1 ] && printf '\n' || true
+    break
+  fi
   sleep 5
 done
-ssh -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@"$RUNNER_IP" true
+ssh -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$RUNNER_IP" true
 
 REG_TOKEN="$(gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runners/registration-token" --jq .token)"
 RUNNER_VERSION="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest | jq -r .tag_name | sed 's/^v//')"
 
-ssh -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@"$RUNNER_IP" \
+ssh -i "$KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$RUNNER_IP" \
   "REPO='$GITHUB_REPOSITORY' REG_TOKEN='$REG_TOKEN' RUNNER_VERSION='$RUNNER_VERSION' bash -s" <<'REMOTE'
 set -Eeuo pipefail
 apt-get update -y
@@ -75,21 +79,29 @@ if [ ! -f .runner ]; then
     --unattended \
     --replace
 fi
-if ! systemctl list-unit-files | grep -q 'actions.runner'; then
+SERVICE_FILE="$(find /etc/systemd/system -maxdepth 1 -type f -name 'actions.runner.*.autonomous-sre-scaleway-01.service' -print -quit)"
+if [ -z "$SERVICE_FILE" ]; then
+  echo "Installing GitHub Actions runner systemd service..."
   ./svc.sh install actions
+else
+  echo "GitHub Actions runner service already installed."
+  echo "Reusing: $SERVICE_FILE"
 fi
 ./svc.sh start
 REMOTE
 
 echo "Waiting for GitHub runner to report online..."
-for _ in $(seq 1 30); do
+STATUS=""
+for attempt in $(seq 1 30); do
+  wait_progress "Waiting for GitHub runner" "$attempt" 30
   STATUS="$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '.runners[] | select(.name=="autonomous-sre-scaleway-01") | .status' 2>/dev/null || true)"
   if [ "$STATUS" = "online" ]; then
+    [ -t 1 ] && printf '\n' || true
     break
   fi
   sleep 5
 done
-[ "${STATUS:-}" = "online" ] || { echo "Runner did not become online in time" >&2; exit 1; }
+[ "$STATUS" = "online" ] || { echo "Runner did not become online in time" >&2; exit 1; }
 
 # Create/update GitHub production environment and secrets/variables.
 gh api -X PUT "repos/$GITHUB_REPOSITORY/environments/production" >/dev/null
