@@ -84,6 +84,7 @@ class RemediationRequest(BaseModel):
     incident_id: UUID
     plan: RemediationPlan
     mode: str
+    approval_token: str | None = None
 
 
 class RemediationResult(BaseModel):
