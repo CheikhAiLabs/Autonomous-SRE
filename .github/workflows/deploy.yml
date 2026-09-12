@@ -47,7 +47,7 @@ jobs:
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       APPROVAL_SIGNING_KEY: ${{ secrets.APPROVAL_SIGNING_KEY }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-      GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN || github.token }}
+      GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
       GITHUB_REPOSITORY: ${{ github.repository }}
       GITHUB_ACTOR: ${{ github.actor }}
       IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -64,6 +64,15 @@ jobs:
         with:
           tofu_version: 1.12.6
           tofu_wrapper: false
+
+      - name: Require durable GHCR credentials
+        shell: bash
+        run: |
+          if [ -z "$GHCR_PULL_TOKEN" ]; then
+            echo "::error::The production GHCR_PULL_TOKEN secret is required."
+            echo "::error::Use a durable token with read:packages; github.token expires after the workflow."
+            exit 1
+          fi
 
       - name: Prepare SSH key and portable config
         shell: bash
