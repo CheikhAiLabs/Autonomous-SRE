@@ -133,6 +133,7 @@ async def approve(incident_id: UUID, req: ApprovalRequest) -> dict[str, str]:
             "incident_id": str(item.id),
             "plan": item.plan.model_dump(mode="json"),
             "mode": "approved",
+            "approval_token": req.token,
         },
     )
     return {"status": "approved"}
