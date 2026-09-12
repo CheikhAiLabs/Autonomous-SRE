@@ -9,9 +9,11 @@ on:
 permissions:
   contents: read
 
+# Isolate CI execution by commit. A cancelled/zombie run for an older SHA must
+# never block validation of the current main revision.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   quality:
