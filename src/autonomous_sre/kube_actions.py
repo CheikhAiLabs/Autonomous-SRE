@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from kubernetes import client, config
+
 from autonomous_sre.action_catalog import validate_plan
 from autonomous_sre.models import RemediationPlan
 
@@ -32,7 +33,7 @@ class KubernetesExecutor:
         return await asyncio.to_thread(mapping[plan.action], plan)
 
     def _restart_deployment(self, plan: RemediationPlan) -> dict[str, Any]:
-        stamp = datetime.now(timezone.utc).isoformat()
+        stamp = datetime.now(UTC).isoformat()
         body = {
             "spec": {
                 "template": {
@@ -81,7 +82,8 @@ class KubernetesExecutor:
         for rs in replicasets:
             owners = rs.metadata.owner_references or []
             if any(o.uid == deployment.metadata.uid for o in owners):
-                revision = int((rs.metadata.annotations or {}).get("deployment.kubernetes.io/revision", "0"))
+                annotations = rs.metadata.annotations or {}
+                revision = int(annotations.get("deployment.kubernetes.io/revision", "0"))
                 owned.append((revision, rs))
         owned.sort(key=lambda item: item[0], reverse=True)
         if len(owned) < 2:
@@ -93,7 +95,7 @@ class KubernetesExecutor:
         metadata = previous_template.setdefault("metadata", {})
         annotations = metadata.setdefault("annotations", {}) or {}
         annotations["autonomous-sre/rollback-from-revision"] = str(current_revision)
-        annotations["autonomous-sre/rollback-at"] = datetime.now(timezone.utc).isoformat()
+        annotations["autonomous-sre/rollback-at"] = datetime.now(UTC).isoformat()
         metadata["annotations"] = annotations
 
         self.apps.patch_namespaced_deployment(
