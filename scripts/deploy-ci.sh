@@ -5,6 +5,7 @@ set -Eeuo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 load_config
 load_scw_credentials
+export KUBECONFIG="${KUBECONFIG:-$GENERATED/kubeconfig}"
 
 progress 5 "Installing deployment tooling"
 "$ROOT/scripts/install-deploy-tools.sh"
@@ -78,6 +79,11 @@ progress 55 "Installing and configuring K3s cluster"
 
 progress 65 "Fetching hardened kubeconfig"
 "$ROOT/scripts/fetch-kubeconfig.sh"
+if [ ! -s "$KUBECONFIG" ]; then
+  echo "Kubeconfig was not generated at $KUBECONFIG" >&2
+  exit 1
+fi
+kubectl cluster-info >/dev/null
 
 progress 75 "Installing platform services"
 "$ROOT/scripts/install-platform.sh"
