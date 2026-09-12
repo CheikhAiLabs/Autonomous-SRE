@@ -29,6 +29,29 @@ def test_planner_uses_alert_annotations():
     assert plan.risk == Risk.LOW
 
 
+def test_planner_accepts_deployed_underscore_annotations():
+    evidence = Evidence(
+        alert_name="DemoServiceHigh5xxRate",
+        labels={"namespace": "demo", "deployment": "demo-service"},
+        annotations={
+            "sre_action": "rollback_deployment",
+            "sre_target_namespace": "demo",
+            "sre_target_kind": "Deployment",
+            "sre_target_name": "demo-service",
+            "sre_blast_radius": "1",
+            "sre_verify_query": "error_ratio",
+            "sre_verify_threshold": "0.10",
+        },
+    )
+    diagnosis = Diagnosis(probable_cause="bad release", confidence=0.9)
+    plan = build_plan(evidence, diagnosis)
+    assert plan is not None
+    assert plan.action == "rollback_deployment"
+    assert plan.target_name == "demo-service"
+    assert plan.verification_query == "error_ratio"
+    assert plan.verification_threshold == 0.10
+
+
 def test_extended_scale_is_medium_risk():
     evidence = Evidence(
         alert_name="CapacityPressure",
