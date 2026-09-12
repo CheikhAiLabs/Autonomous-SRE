@@ -3,6 +3,13 @@ from __future__ import annotations
 from autonomous_sre.models import Diagnosis, Evidence, RemediationPlan, Risk
 
 
+SCALING_ACTIONS = {
+    "scale_deployment",
+    "scale_deployment_extended",
+    "scale_statefulset",
+}
+
+
 def build_plan(evidence: Evidence, diagnosis: Diagnosis) -> RemediationPlan | None:
     action = evidence.annotations.get("sre.action")
     if not action:
@@ -22,7 +29,7 @@ def build_plan(evidence: Evidence, diagnosis: Diagnosis) -> RemediationPlan | No
         return None
 
     parameters: dict[str, object] = {}
-    if action in {"scale_deployment", "scale_deployment_extended"}:
+    if action in SCALING_ACTIONS:
         parameters["replicas"] = int(evidence.annotations.get("sre.replicas", "2"))
 
     return RemediationPlan(
