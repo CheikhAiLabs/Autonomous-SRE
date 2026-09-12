@@ -85,5 +85,5 @@ run_workflow_and_wait() {
     sleep 2
   done
   [ -n "$run_id" ] && [ "$run_id" != "$previous_id" ] || { echo "Could not find new workflow run for $workflow" >&2; exit 1; }
-  GH_PAGER=cat gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+  gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
 }
