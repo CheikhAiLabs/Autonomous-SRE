@@ -6,6 +6,34 @@ from autonomous_sre.models import IncidentStatus, RemediationResult
 from autonomous_sre.notifications import send_incident_email
 
 
+async def _reset_pipeline_status() -> None:
+    await record_agent_activity(
+        "ai-reasoner",
+        "idle",
+        "Waiting for evidence",
+    )
+    await record_agent_activity(
+        "planner",
+        "idle",
+        "Waiting for a diagnosis",
+    )
+    await record_agent_activity(
+        "policy-guard",
+        "idle",
+        "Waiting for a plan",
+    )
+    await record_agent_activity(
+        "remediation-controller",
+        "idle",
+        "Waiting for work",
+    )
+    await record_agent_activity(
+        "recovery-verifier",
+        "idle",
+        "Waiting for remediation",
+    )
+
+
 async def handle_result(payload: dict[str, object]) -> None:
     result = RemediationResult.model_validate(payload)
     incident = await get_incident(UUID(str(result.incident_id)))
@@ -26,3 +54,4 @@ async def handle_result(payload: dict[str, object]) -> None:
         incident,
         "RECOVERED AUTOMATICALLY" if result.success else "REMEDIATION FAILED",
     )
+    await _reset_pipeline_status()
