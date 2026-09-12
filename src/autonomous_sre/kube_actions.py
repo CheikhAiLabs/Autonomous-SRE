@@ -27,39 +27,45 @@ class KubernetesExecutor:
             "scale_deployment": self._scale_deployment,
             "scale_deployment_extended": self._scale_deployment_extended,
             "replace_single_pod": self._replace_single_pod,
+            "restart_statefulset": self._restart_statefulset,
+            "scale_statefulset": self._scale_statefulset,
+            "restart_daemonset": self._restart_daemonset,
+            "uncordon_node": self._uncordon_node,
+            "cordon_node": self._cordon_node,
         }
         if plan.action not in mapping:
             raise ValueError(f"Action {plan.action!r} is not implemented by this controller")
         return await asyncio.to_thread(mapping[plan.action], plan)
 
+    @staticmethod
+    def _restart_annotation() -> dict[str, str]:
+        return {"autonomous-sre/restarted-at": datetime.now(UTC).isoformat()}
+
     def _restart_deployment(self, plan: RemediationPlan) -> dict[str, Any]:
-        stamp = datetime.now(UTC).isoformat()
-        body = {
-            "spec": {
-                "template": {
-                    "metadata": {
-                        "annotations": {"autonomous-sre/restarted-at": stamp}
-                    }
-                }
-            }
-        }
-        self.apps.patch_namespaced_deployment(plan.target_name, plan.namespace, body)
-        return {"action": plan.action, "timestamp": stamp}
+        annotations = self._restart_annotation()
+        self.apps.patch_namespaced_deployment(
+            plan.target_name,
+            plan.namespace,
+            {"spec": {"template": {"metadata": {"annotations": annotations}}}},
+        )
+        return {"action": plan.action, "timestamp": annotations["autonomous-sre/restarted-at"]}
 
     def _scale_deployment(self, plan: RemediationPlan) -> dict[str, Any]:
         replicas = int(plan.parameters["replicas"])
         if not 1 <= replicas <= 6:
             raise ValueError("Autonomous scaling is hard limited to 1..6 replicas")
-        body = {"spec": {"replicas": replicas}}
-        self.apps.patch_namespaced_deployment_scale(plan.target_name, plan.namespace, body)
+        self.apps.patch_namespaced_deployment_scale(
+            plan.target_name, plan.namespace, {"spec": {"replicas": replicas}}
+        )
         return {"action": plan.action, "replicas": replicas}
 
     def _scale_deployment_extended(self, plan: RemediationPlan) -> dict[str, Any]:
         replicas = int(plan.parameters["replicas"])
         if not 1 <= replicas <= 10:
-            raise ValueError("Approved scaling is hard limited to 1..10 replicas")
-        body = {"spec": {"replicas": replicas}}
-        self.apps.patch_namespaced_deployment_scale(plan.target_name, plan.namespace, body)
+            raise ValueError("Extended autonomous scaling is hard limited to 1..10 replicas")
+        self.apps.patch_namespaced_deployment_scale(
+            plan.target_name, plan.namespace, {"spec": {"replicas": replicas}}
+        )
         return {"action": plan.action, "replicas": replicas}
 
     def _replace_single_pod(self, plan: RemediationPlan) -> dict[str, Any]:
@@ -67,8 +73,45 @@ class KubernetesExecutor:
         owners = pod.metadata.owner_references or []
         if not owners:
             raise ValueError("Refusing to delete a standalone Pod")
-        self.core.delete_namespaced_pod(plan.target_name, plan.namespace, grace_period_seconds=30)
+        self.core.delete_namespaced_pod(
+            plan.target_name, plan.namespace, grace_period_seconds=30
+        )
         return {"action": plan.action, "pod": plan.target_name}
+
+    def _restart_statefulset(self, plan: RemediationPlan) -> dict[str, Any]:
+        annotations = self._restart_annotation()
+        self.apps.patch_namespaced_stateful_set(
+            plan.target_name,
+            plan.namespace,
+            {"spec": {"template": {"metadata": {"annotations": annotations}}}},
+        )
+        return {"action": plan.action, "timestamp": annotations["autonomous-sre/restarted-at"]}
+
+    def _scale_statefulset(self, plan: RemediationPlan) -> dict[str, Any]:
+        replicas = int(plan.parameters["replicas"])
+        if not 1 <= replicas <= 8:
+            raise ValueError("StatefulSet scaling is hard limited to 1..8 replicas")
+        self.apps.patch_namespaced_stateful_set_scale(
+            plan.target_name, plan.namespace, {"spec": {"replicas": replicas}}
+        )
+        return {"action": plan.action, "replicas": replicas}
+
+    def _restart_daemonset(self, plan: RemediationPlan) -> dict[str, Any]:
+        annotations = self._restart_annotation()
+        self.apps.patch_namespaced_daemon_set(
+            plan.target_name,
+            plan.namespace,
+            {"spec": {"template": {"metadata": {"annotations": annotations}}}},
+        )
+        return {"action": plan.action, "timestamp": annotations["autonomous-sre/restarted-at"]}
+
+    def _uncordon_node(self, plan: RemediationPlan) -> dict[str, Any]:
+        self.core.patch_node(plan.target_name, {"spec": {"unschedulable": False}})
+        return {"action": plan.action, "node": plan.target_name, "unschedulable": False}
+
+    def _cordon_node(self, plan: RemediationPlan) -> dict[str, Any]:
+        self.core.patch_node(plan.target_name, {"spec": {"unschedulable": True}})
+        return {"action": plan.action, "node": plan.target_name, "unschedulable": True}
 
     def _rollback_deployment(self, plan: RemediationPlan) -> dict[str, Any]:
         deployment = self.apps.read_namespaced_deployment(plan.target_name, plan.namespace)
