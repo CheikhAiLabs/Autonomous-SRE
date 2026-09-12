@@ -23,6 +23,21 @@ diagnose_workload() {
 }
 
 kubectl wait --for=condition=Ready nodes --all --timeout=3m >/dev/null && pass "Kubernetes nodes" || fail "Kubernetes nodes"
+
+IMAGE_PULL_FAILURES="$(
+  kubectl get pods -A -o json | jq -r '
+    .items[] as $pod
+    | $pod.status.containerStatuses[]?
+    | select((.state.waiting.reason // "") | test("ImagePull|ErrImagePull|CrashLoopBackOff"))
+    | "\($pod.metadata.namespace)/\($pod.metadata.name) \(.name): \(.state.waiting.reason)"
+  '
+)"
+if [ -n "$IMAGE_PULL_FAILURES" ]; then
+  echo "$IMAGE_PULL_FAILURES" >&2
+  fail "Container startup health"
+else
+  pass "Container startup health"
+fi
 kubectl -n kube-system rollout status daemonset/cilium --timeout=2m >/dev/null && pass "Cilium" || fail "Cilium"
 kubectl -n sre-system rollout status statefulset/postgres --timeout=3m >/dev/null && pass "PostgreSQL" || fail "PostgreSQL"
 if kubectl -n sre-system rollout status deployment/opa --timeout=2m >/dev/null; then

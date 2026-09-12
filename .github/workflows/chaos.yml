@@ -51,11 +51,16 @@ jobs:
           tofu_version: 1.12.6
       - name: Prepare access
         env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           APPROVAL_SIGNING_KEY: ${{ secrets.APPROVAL_SIGNING_KEY }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
+          if [ -z "$GHCR_PULL_TOKEN" ]; then
+            echo "::error::The production GHCR_PULL_TOKEN secret is required."
+            exit 1
+          fi
           mkdir -p config "${{ runner.temp }}/ssh"
           printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "${{ runner.temp }}/ssh/deploy_key"
           chmod 0600 "${{ runner.temp }}/ssh/deploy_key"
@@ -81,7 +86,7 @@ jobs:
           SMTP_PASSWORD=$SMTP_PASSWORD
           APPROVAL_SIGNING_KEY=$APPROVAL_SIGNING_KEY
           POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-          GHCR_PULL_TOKEN=${{ secrets.GHCR_PULL_TOKEN || github.token }}
+          GHCR_PULL_TOKEN=${{ secrets.GHCR_PULL_TOKEN }}
           EOF
           chmod 0600 config/secrets.env
           ./scripts/install-deploy-tools.sh

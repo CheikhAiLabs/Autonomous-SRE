@@ -35,8 +35,13 @@ kubectl create configmap opa-policy \
   --from-file=remediation.rego="$ROOT/platform/policies/remediation.rego" \
   --dry-run=client -o yaml > "$OUT/05-opa-policy.yaml"
 
-# Optional private GHCR pull secret. GitHub Actions supplies github.token by default.
-if [ -n "${GHCR_PULL_TOKEN:-}" ]; then
+# Private GHCR images require a durable read:packages token.
+# The per-workflow github.token expires and must never be persisted in Kubernetes.
+if [ -z "${GHCR_PULL_TOKEN:-}" ]; then
+  echo "GHCR_PULL_TOKEN is required for durable private image pulls." >&2
+  exit 1
+fi
+
   kubectl create secret docker-registry ghcr-pull \
     --namespace sre-system \
     --docker-server=ghcr.io \
@@ -49,8 +54,6 @@ if [ -n "${GHCR_PULL_TOKEN:-}" ]; then
     --docker-username="${GITHUB_ACTOR:-github-actions}" \
     --docker-password="$GHCR_PULL_TOKEN" \
     --dry-run=client -o yaml > "$OUT/07-ghcr-pull-demo.yaml"
-fi
-
 for tpl in "$ROOT"/platform/manifests/*.yaml.tpl; do
   base="$(basename "$tpl" .tpl)"
   envsubst < "$tpl" > "$OUT/$base"
