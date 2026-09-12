@@ -10,6 +10,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "kubernetes>=33,<40",
   "langgraph>=0.6,<2",
+  "msgpack>=1.2.1,<2",
   "nats-py>=2.11,<3",
   "prometheus-client>=0.22,<1",
   "pydantic>=2.11,<3",
