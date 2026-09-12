@@ -1,5 +1,13 @@
+from autonomous_sre.action_catalog import load_catalog
 from autonomous_sre.models import Diagnosis, Evidence, Risk
 from autonomous_sre.planner import build_plan
+
+
+def test_remediation_catalog_loads_from_repository():
+    catalog = load_catalog()
+    assert "rollback_deployment" in catalog
+    assert "restart_statefulset" in catalog
+    assert catalog["cordon_node"]["risk"] == "high"
 
 
 def test_planner_uses_alert_annotations():
