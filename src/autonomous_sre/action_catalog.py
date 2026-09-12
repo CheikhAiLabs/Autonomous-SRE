@@ -9,7 +9,8 @@ from autonomous_sre.models import RemediationPlan, Risk
 
 @lru_cache
 def load_catalog() -> dict[str, dict[str, object]]:
-    path = Path(get_settings().action_catalog_path)
+    configured_path = Path(get_settings().action_catalog_path)
+    path = configured_path if configured_path.exists() else Path("remediation/catalog.yaml")
     data = yaml.safe_load(path.read_text())
     return data["actions"]
 
