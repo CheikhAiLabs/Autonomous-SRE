@@ -63,7 +63,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
-          provenance: mode=max
+          provenance: false
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha }}
             ${{ steps.meta.outputs.image }}:latest
