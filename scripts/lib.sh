@@ -58,7 +58,10 @@ load_scw_credentials() {
 
   if [ -z "${SCW_DEFAULT_ORGANIZATION_ID:-}" ]; then
     SCW_DEFAULT_ORGANIZATION_ID="$(
-      scw account project get project-id="$SCW_PROJECT_ID" -o json \
+      curl -fsSL \
+        -H "X-Auth-Token: $SCW_SECRET_KEY" \
+        -H "Accept: application/json" \
+        "https://api.scaleway.com/account/v3/projects/$SCW_PROJECT_ID" \
         | jq -r '.organization_id // .organizationId // empty'
     )"
   fi
