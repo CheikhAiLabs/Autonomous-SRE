@@ -13,7 +13,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [autonomous-sre-api, autonomous-sre-worker]
+                values: [autonomous-sre-api, autonomous-sre-worker, remediation-controller]
       ports:
         - {protocol: TCP, port: 5432}
 ---
