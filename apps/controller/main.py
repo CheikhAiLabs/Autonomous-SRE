@@ -2,6 +2,7 @@ import asyncio
 from uuid import UUID
 
 from autonomous_sre.config import get_settings
+from autonomous_sre.database import init_db, record_agent_activity
 from autonomous_sre.events import connect_nats, publish, subscribe_json
 from autonomous_sre.kube_actions import KubernetesExecutor
 from autonomous_sre.models import RemediationPlan, RemediationResult
@@ -38,7 +39,18 @@ async def verify_recovery(plan: RemediationPlan) -> tuple[bool, dict[str, object
 
 
 async def main() -> None:
+    await init_db()
     nc = await connect_nats()
+    await record_agent_activity(
+        "remediation-controller",
+        "watching",
+        "Waiting for approved remediation requests",
+    )
+    await record_agent_activity(
+        "recovery-verifier",
+        "idle",
+        "Waiting for a remediation to verify",
+    )
     executor = KubernetesExecutor()
     policy = PolicyClient()
 
@@ -50,6 +62,13 @@ async def main() -> None:
         allowed = decision.result.value == "allow" or mode == "approved"
 
         if not allowed:
+            await record_agent_activity(
+                "remediation-controller",
+                "blocked",
+                "Controller refused the remediation policy decision",
+                incident_id,
+                {"reason": decision.reason},
+            )
             result = RemediationResult(
                 incident_id=incident_id,
                 success=False,
@@ -57,8 +76,34 @@ async def main() -> None:
             )
         else:
             try:
+                await record_agent_activity(
+                    "remediation-controller",
+                    "working",
+                    f"Executing {plan.action} on {plan.namespace}/{plan.target_name}",
+                    incident_id,
+                )
                 details = await executor.execute(plan)
+                await record_agent_activity(
+                    "remediation-controller",
+                    "success",
+                    f"Executed {plan.action}",
+                    incident_id,
+                    details,
+                )
+                await record_agent_activity(
+                    "recovery-verifier",
+                    "working",
+                    "Checking post-remediation Prometheus signals",
+                    incident_id,
+                )
                 verified, verification = await verify_recovery(plan)
+                await record_agent_activity(
+                    "recovery-verifier",
+                    "success" if verified else "error",
+                    "Recovery confirmed" if verified else "Recovery verification failed",
+                    incident_id,
+                    verification,
+                )
                 details["post_remediation"] = verification
                 result = RemediationResult(
                     incident_id=incident_id,
@@ -71,6 +116,12 @@ async def main() -> None:
                     details=details,
                 )
             except Exception as exc:
+                await record_agent_activity(
+                    "remediation-controller",
+                    "error",
+                    f"Remediation failed: {exc}",
+                    incident_id,
+                )
                 result = RemediationResult(
                     incident_id=incident_id,
                     success=False,
