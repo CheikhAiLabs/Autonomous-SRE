@@ -4,7 +4,14 @@ from uuid import UUID
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from autonomous_sre.database import get_incident, init_db, list_incidents, save_incident
+from autonomous_sre.database import (
+    get_incident,
+    init_db,
+    list_agent_activity,
+    list_agent_statuses,
+    list_incidents,
+    save_incident,
+)
 from autonomous_sre.events import connect_nats, publish
 from autonomous_sre.models import IncidentStatus
 from autonomous_sre.tokens import verify_approval_token
@@ -33,6 +40,16 @@ async def shutdown() -> None:
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/v1/agents")
+async def agents() -> list[dict[str, object]]:
+    return await list_agent_statuses()
+
+
+@app.get("/api/v1/activity")
+async def activity() -> list[dict[str, object]]:
+    return await list_agent_activity()
 
 
 @app.get("/api/v1/incidents")

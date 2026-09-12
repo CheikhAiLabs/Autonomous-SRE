@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from autonomous_sre.database import get_incident, save_incident
+from autonomous_sre.database import get_incident, record_agent_activity, save_incident
 from autonomous_sre.models import IncidentStatus, RemediationResult
 from autonomous_sre.notifications import send_incident_email
 
@@ -15,6 +15,13 @@ async def handle_result(payload: dict[str, object]) -> None:
     incident.status = IncidentStatus.RECOVERED if result.success else IncidentStatus.FAILED
     incident.updated_at = datetime.now(UTC)
     await save_incident(incident)
+    await record_agent_activity(
+        "case-manager",
+        "success" if result.success else "error",
+        "Incident closed as recovered" if result.success else "Incident marked as failed",
+        incident.id,
+        {"message": result.message},
+    )
     await send_incident_email(
         incident,
         "RECOVERED AUTOMATICALLY" if result.success else "REMEDIATION FAILED",

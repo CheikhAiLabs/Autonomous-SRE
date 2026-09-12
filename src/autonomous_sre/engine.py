@@ -11,6 +11,7 @@ from autonomous_sre.config import get_settings
 from autonomous_sre.database import (
     find_active_by_fingerprint,
     find_recent_by_fingerprint,
+    record_agent_activity,
     save_incident,
 )
 from autonomous_sre.events import publish
@@ -67,9 +68,16 @@ class IncidentEngine:
         )
         incident = Incident(fingerprint=fp, evidence=evidence)
         await save_incident(incident)
+        await record_agent_activity(
+            "detector",
+            "success",
+            f"Detected managed alert {evidence.alert_name}",
+            incident.id,
+            {"fingerprint": incident.fingerprint},
+        )
         await send_incident_email(incident, "INCIDENT DETECTED")
 
-        diagnosis, plan, decision = await self.reasoning.run(evidence)
+        diagnosis, plan, decision = await self.reasoning.run(evidence, incident.id)
         incident.diagnosis = diagnosis
         incident.plan = plan
         incident.status = IncidentStatus.DIAGNOSED
@@ -107,6 +115,11 @@ class IncidentEngine:
             await send_incident_email(incident, "ACTION BLOCKED BY POLICY")
 
     async def run(self) -> None:
+        await record_agent_activity(
+            "detector",
+            "watching",
+            "Watching Prometheus for managed alerts",
+        )
         while True:
             try:
                 for alert in await self.prom.firing_alerts():
@@ -115,5 +128,11 @@ class IncidentEngine:
                     if managed == "true":
                         await self.process_alert(alert)
             except Exception as exc:
+                await record_agent_activity(
+                    "detector",
+                    "error",
+                    "Prometheus incident loop failed",
+                    details={"error": str(exc)},
+                )
                 print(f"incident-loop-error: {exc}", flush=True)
             await asyncio.sleep(self.settings.incident_poll_interval_seconds)
