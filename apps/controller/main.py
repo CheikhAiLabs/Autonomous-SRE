@@ -8,6 +8,7 @@ from autonomous_sre.kube_actions import KubernetesExecutor
 from autonomous_sre.models import RemediationPlan, RemediationResult
 from autonomous_sre.policy import PolicyClient
 from autonomous_sre.prometheus import PrometheusClient
+from autonomous_sre.tokens import verify_approval_token
 
 
 async def verify_recovery(
@@ -75,8 +76,26 @@ async def main() -> None:
         incident_id = UUID(str(payload["incident_id"]))
         plan = RemediationPlan.model_validate(payload["plan"])
         mode = str(payload.get("mode", "autonomous-low-risk"))
-        decision = await policy.decide(plan)
-        allowed = decision.result.value == "allow" or mode == "approved"
+
+        if mode == "approved":
+            approval_token = str(payload.get("approval_token", ""))
+            if not verify_approval_token(approval_token, incident_id):
+                await record_agent_activity(
+                    "remediation-controller",
+                    "blocked",
+                    "Controller rejected invalid or expired approval proof",
+                    incident_id,
+                )
+                result = RemediationResult(
+                    incident_id=incident_id,
+                    success=False,
+                    message="Execution refused: invalid or expired approval proof",
+                )
+                await publish(nc, "remediation.result", result.model_dump(mode="json"))
+                return
+
+        decision = await policy.decide(plan, mode=mode)
+        allowed = decision.result.value == "allow"
 
         if not allowed:
             await record_agent_activity(
