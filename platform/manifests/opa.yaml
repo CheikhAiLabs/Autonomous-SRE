@@ -14,7 +14,7 @@ spec:
       containers:
         - name: opa
           image: openpolicyagent/opa:1.17.0-static
-          args: ["run", "--server", "--addr=0.0.0.0:8181", "/policies"]
+          args: ["run", "--server", "--addr=0.0.0.0:8181", "/remediation.rego"]
           ports:
             - {name: http, containerPort: 8181}
           readinessProbe:
@@ -22,7 +22,7 @@ spec:
             initialDelaySeconds: 3
             periodSeconds: 5
           volumeMounts:
-            - {name: policy, mountPath: /policies}
+            - {name: policy, mountPath: /remediation.rego, subPath: remediation.rego, readOnly: true}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
