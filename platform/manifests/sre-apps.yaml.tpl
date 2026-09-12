@@ -152,6 +152,9 @@ spec:
           imagePullPolicy: Always
           envFrom:
             - configMapRef: {name: autonomous-sre-config}
+          env:
+            - name: APPROVAL_SIGNING_KEY
+              valueFrom: {secretKeyRef: {name: autonomous-sre-secrets, key: APPROVAL_SIGNING_KEY}}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {memory: 512Mi}
