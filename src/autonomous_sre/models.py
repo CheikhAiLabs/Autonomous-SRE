@@ -46,6 +46,8 @@ class Diagnosis(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     affected_resources: list[str] = Field(default_factory=list)
     rationale: str = ""
+    recommended_action: str | None = None
+    recommended_parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class RemediationPlan(BaseModel):
