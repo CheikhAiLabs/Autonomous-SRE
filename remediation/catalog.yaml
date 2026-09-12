@@ -1,32 +1,48 @@
 actions:
   restart_deployment:
     risk: low
-    max_blast_radius: 1
-    description: Restart one Deployment by patching its Pod template annotation.
+    max_blast_radius: 3
+    description: Restart a Deployment by patching its Pod template annotation.
   rollback_deployment:
     risk: low
-    max_blast_radius: 1
+    max_blast_radius: 3
     description: Restore the previous Deployment ReplicaSet template.
   scale_deployment:
     risk: low
-    max_blast_radius: 3
-    description: Scale one Deployment within a hard-coded 1..6 replica guardrail.
+    max_blast_radius: 6
+    description: Scale one Deployment within a 1..6 replica guardrail.
   scale_deployment_extended:
     risk: medium
-    max_blast_radius: 1
-    description: Scale one Deployment up to 10 replicas after explicit operator approval.
+    max_blast_radius: 10
+    description: Scale one Deployment within a 1..10 replica guardrail autonomously.
   replace_single_pod:
     risk: low
     max_blast_radius: 1
     description: Delete one controller-owned Pod so Kubernetes replaces it.
+  restart_statefulset:
+    risk: medium
+    max_blast_radius: 5
+    description: Trigger a rolling restart of one StatefulSet without changing its specification.
+  scale_statefulset:
+    risk: medium
+    max_blast_radius: 8
+    description: Scale one StatefulSet within a 1..8 replica guardrail.
+  restart_daemonset:
+    risk: medium
+    max_blast_radius: 25
+    description: Trigger a controlled rolling restart of one DaemonSet.
+  uncordon_node:
+    risk: medium
+    max_blast_radius: 1
+    description: Return one previously cordoned node to schedulable state.
   cordon_node:
     risk: high
     max_blast_radius: 1
-    description: Deliberately not implemented by the autonomous controller.
+    description: Mark one node unschedulable. Requires explicit operator approval.
   drain_node:
     risk: forbidden
     max_blast_radius: 0
-    description: Forbidden in v1 autonomous mode.
+    description: Node draining remains forbidden because it can evict many workloads across namespaces.
   delete_namespace:
     risk: forbidden
     max_blast_radius: 0
