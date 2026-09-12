@@ -99,15 +99,30 @@ MANIFESTS="$GENERATED/manifests"
 kubectl apply -f "$MANIFESTS/00-namespaces.yaml"
 kubectl apply -f "$MANIFESTS/gatekeeper-baseline.yaml"
 
+GATEKEEPER_TEMPLATE="k8srequiredrunasnonroot"
 GATEKEEPER_CRD="k8srequiredrunasnonroots.constraints.gatekeeper.sh"
 for attempt in $(seq 1 60); do
   if kubectl get crd "$GATEKEEPER_CRD" >/dev/null 2>&1; then
     break
   fi
+
+  template_json="$(kubectl get constrainttemplate "$GATEKEEPER_TEMPLATE" -o json 2>/dev/null || true)"
+  if [ -n "$template_json" ] && printf '%s' "$template_json" | jq -e '.status.errors? | length > 0' >/dev/null 2>&1; then
+    echo "Gatekeeper rejected ConstraintTemplate $GATEKEEPER_TEMPLATE:" >&2
+    printf '%s' "$template_json" | jq '.status.errors' >&2
+    exit 1
+  fi
+
   wait_progress "Waiting for Gatekeeper constraint CRD" "$attempt" 60
   sleep 2
 done
-kubectl get crd "$GATEKEEPER_CRD" >/dev/null
+
+if ! kubectl get crd "$GATEKEEPER_CRD" >/dev/null 2>&1; then
+  echo "Gatekeeper constraint CRD was not generated: $GATEKEEPER_CRD" >&2
+  kubectl get constrainttemplate "$GATEKEEPER_TEMPLATE" -o yaml >&2 || true
+  exit 1
+fi
+
 kubectl wait --for=condition=Established "crd/$GATEKEEPER_CRD" --timeout=2m
 kubectl apply -f "$MANIFESTS/gatekeeper-constraint.yaml"
 
