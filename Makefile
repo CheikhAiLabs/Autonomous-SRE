@@ -1,28 +1,29 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help init configure check fmt test plan deploy deploy-all deploy-ci verify status logs headlamp-token chaos-smoke chaos-bad-release access destroy destroy-all
+.PHONY: help init configure check fmt test plan deploy deploy-all deploy-ci verify status logs headlamp-token chaos-smoke chaos-replica-floor chaos-bad-release access destroy destroy-all
 
 help:
 	@echo "Autonomous-SRE"
 	@echo
-	@echo "  make init               Initialize/create the GitHub repository safely"
-	@echo "  make configure          Create/update portable local config"
-	@echo "  make check              Run local static checks"
-	@echo "  make fmt                Format Python and OpenTofu"
-	@echo "  make test               Run Python and OPA tests"
-	@echo "  make plan               Plan runner + platform OpenTofu stacks"
-	@echo "  make deploy-all         Bootstrap runner and deploy the full platform"
-	@echo "  make deploy             Deploy using the existing GitHub runner"
-	@echo "  make verify             Run end-to-end verification"
-	@echo "  make status             Show cluster and SRE status"
-	@echo "  make logs               Follow Autonomous-SRE logs"
-	@echo "  make headlamp-token     Create an 8-hour Kubernetes Explorer login token"
-	@echo "  make chaos-smoke        Run safe Pod kill scenario"
-	@echo "  make chaos-bad-release  Run the autonomous rollback scenario"
-	@echo "  make access             Refresh operator CIDR"
-	@echo "  make destroy            Destroy platform, keep runner/state bucket"
-	@echo "  make destroy-all        Destroy platform + runner + state bucket"
+	@echo "  make init                 Initialize/create the GitHub repository safely"
+	@echo "  make configure            Create/update portable local config"
+	@echo "  make check                Run local static checks"
+	@echo "  make fmt                  Format Python and OpenTofu"
+	@echo "  make test                 Run Python and OPA tests"
+	@echo "  make plan                 Plan runner + platform OpenTofu stacks"
+	@echo "  make deploy-all           Bootstrap runner and deploy the full platform"
+	@echo "  make deploy               Deploy using the existing GitHub runner"
+	@echo "  make verify               Run end-to-end verification"
+	@echo "  make status               Show cluster and SRE status"
+	@echo "  make logs                 Follow Autonomous-SRE logs"
+	@echo "  make headlamp-token       Create an 8-hour Kubernetes Explorer login token"
+	@echo "  make chaos-smoke          Kubernetes self-heal sanity check; no SRE incident expected if recovery is fast"
+	@echo "  make chaos-replica-floor  Trigger a managed low-risk scale remediation"
+	@echo "  make chaos-bad-release    Trigger the autonomous rollback scenario"
+	@echo "  make access               Refresh operator CIDR"
+	@echo "  make destroy              Destroy platform, keep runner/state bucket"
+	@echo "  make destroy-all          Destroy platform + runner + state bucket"
 
 init:
 	@./scripts/configure.sh
@@ -70,6 +71,9 @@ headlamp-token:
 
 chaos-smoke:
 	@./scripts/chaos.sh pod-kill
+
+chaos-replica-floor:
+	@./scripts/chaos.sh replica-floor
 
 chaos-bad-release:
 	@./scripts/chaos.sh bad-release
