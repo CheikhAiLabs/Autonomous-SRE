@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
@@ -69,8 +69,8 @@ class Incident(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     fingerprint: str
     status: IncidentStatus = IncidentStatus.OPEN
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     evidence: Evidence
     diagnosis: Diagnosis | None = None
     plan: RemediationPlan | None = None
