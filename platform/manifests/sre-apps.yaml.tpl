@@ -153,6 +153,10 @@ spec:
           envFrom:
             - configMapRef: {name: autonomous-sre-config}
           env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: autonomous-sre-secrets, key: POSTGRES_PASSWORD}}
+            - name: DATABASE_URL
+              value: postgresql+asyncpg://autonomous_sre:$(POSTGRES_PASSWORD)@postgres.sre-system.svc:5432/autonomous_sre
             - name: APPROVAL_SIGNING_KEY
               valueFrom: {secretKeyRef: {name: autonomous-sre-secrets, key: APPROVAL_SIGNING_KEY}}
           resources:
