@@ -17,7 +17,7 @@ from autonomous_sre.events import connect_nats, publish
 from autonomous_sre.models import IncidentStatus
 from autonomous_sre.tokens import verify_approval_token
 
-app = FastAPI(title="Autonomous-SRE API", version="0.2.0")
+app = FastAPI(title="Autonomous-SRE API", version="0.3.0")
 nc = None
 
 
@@ -92,10 +92,30 @@ async def incident_report(incident_id: UUID) -> dict[str, object]:
         for event in await list_agent_activity()
         if str(event.get("incident_id") or "") == str(item.id)
     ]
+    notification_events = [
+        event for event in incident_activity if event.get("agent_name") == "notification"
+    ]
+    latest_notification = notification_events[0] if notification_events else None
+
     payload = item.model_dump(mode="json")
     started = item.created_at
     finished = item.updated_at
     duration_seconds = max(0, int((finished - started).total_seconds()))
+
+    email_delivery = {
+        "status": "not_attempted",
+        "message": "No incident email has been attempted",
+        "recipient": None,
+        "updated_at": None,
+    }
+    if latest_notification:
+        details = latest_notification.get("details") or {}
+        email_delivery = {
+            "status": latest_notification.get("status", "unknown"),
+            "message": latest_notification.get("message"),
+            "recipient": details.get("recipient") if isinstance(details, dict) else None,
+            "updated_at": latest_notification.get("created_at"),
+        }
 
     return {
         "report_type": "autonomous-sre-intervention",
@@ -110,6 +130,7 @@ async def incident_report(incident_id: UUID) -> dict[str, object]:
         "plan": payload.get("plan"),
         "policy": payload.get("policy"),
         "remediation_result": payload.get("remediation_result"),
+        "email_delivery": email_delivery,
         "timeline": incident_activity,
     }
 
