@@ -3,12 +3,16 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from nats.aio.client import Client as NATS
 
 from autonomous_sre.config import get_settings
-from autonomous_sre.database import find_active_by_fingerprint, find_recent_by_fingerprint, save_incident
+from autonomous_sre.database import (
+    find_active_by_fingerprint,
+    find_recent_by_fingerprint,
+    save_incident,
+)
 from autonomous_sre.events import publish
 from autonomous_sre.llm import LocalReasoner
 from autonomous_sre.models import Evidence, Incident, IncidentStatus, PolicyResult
@@ -43,15 +47,23 @@ class IncidentEngine:
         if await find_recent_by_fingerprint(fp, self.settings.incident_cooldown_seconds):
             return
 
-        labels = {str(k): str(v) for k, v in (alert.get("labels") or {}).items()}  # type: ignore[union-attr]
-        annotations = {
-            str(k): str(v) for k, v in (alert.get("annotations") or {}).items()  # type: ignore[union-attr]
+        labels = {
+            str(k): str(v)
+            for k, v in (alert.get("labels") or {}).items()  # type: ignore[union-attr]
         }
+        annotations = {
+            str(k): str(v)
+            for k, v in (alert.get("annotations") or {}).items()  # type: ignore[union-attr]
+        }
+        observation = annotations.get(
+            "description",
+            annotations.get("summary", "Firing alert"),
+        )
         evidence = Evidence(
             alert_name=labels.get("alertname", "unknown"),
             labels=labels,
             annotations=annotations,
-            observations=[annotations.get("description", annotations.get("summary", "Firing alert"))],
+            observations=[observation],
         )
         incident = Incident(fingerprint=fp, evidence=evidence)
         await save_incident(incident)
@@ -61,7 +73,7 @@ class IncidentEngine:
         incident.diagnosis = diagnosis
         incident.plan = plan
         incident.status = IncidentStatus.DIAGNOSED
-        incident.updated_at = datetime.now(timezone.utc)
+        incident.updated_at = datetime.now(UTC)
 
         if plan is None or decision is None:
             incident.status = IncidentStatus.BLOCKED
@@ -70,7 +82,7 @@ class IncidentEngine:
             return
 
         incident.policy = decision
-        incident.updated_at = datetime.now(timezone.utc)
+        incident.updated_at = datetime.now(UTC)
 
         if decision.result == PolicyResult.ALLOW:
             incident.status = IncidentStatus.REMEDIATING
@@ -99,7 +111,8 @@ class IncidentEngine:
             try:
                 for alert in await self.prom.firing_alerts():
                     labels = alert.get("labels") or {}
-                    if str(labels.get("sre_managed", "false")).lower() == "true":  # type: ignore[union-attr]
+                    managed = str(labels.get("sre_managed", "false")).lower()  # type: ignore[union-attr]
+                    if managed == "true":
                         await self.process_alert(alert)
             except Exception as exc:
                 print(f"incident-loop-error: {exc}", flush=True)
