@@ -90,9 +90,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
       - name: Install dependencies
         working-directory: apps/dashboard
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Typecheck and build
         working-directory: apps/dashboard
         run: npm run build
