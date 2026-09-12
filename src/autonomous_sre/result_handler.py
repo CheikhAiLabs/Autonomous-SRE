@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from autonomous_sre.database import get_incident, save_incident
@@ -13,7 +13,7 @@ async def handle_result(payload: dict[str, object]) -> None:
         return
     incident.remediation_result = result.model_dump(mode="json")
     incident.status = IncidentStatus.RECOVERED if result.success else IncidentStatus.FAILED
-    incident.updated_at = datetime.now(timezone.utc)
+    incident.updated_at = datetime.now(UTC)
     await save_incident(incident)
     await send_incident_email(
         incident,
