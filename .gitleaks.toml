@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Known non-secret approval-token test fixture from initial commit"
+fingerprints = [
+  "a1369a135cc2af060d9432d3f62a77f4675fe0a1:tests/test_tokens.py:generic-api-key:7",
+]
