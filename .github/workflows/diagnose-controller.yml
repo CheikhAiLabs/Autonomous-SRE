@@ -1,0 +1,76 @@
+name: Diagnose Remediation Controller
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/diagnose-controller.yml'
+      - 'apps/controller/**'
+      - 'src/autonomous_sre/**'
+      - 'platform/manifests/sre-apps.yaml.tpl'
+      - 'scripts/verify.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    environment: production
+    timeout-minutes: 10
+    env:
+      SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+      SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+      SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+      SCW_REGION: ${{ vars.SCW_REGION }}
+      SCW_ZONE: ${{ vars.SCW_ZONE }}
+      OPERATOR_CIDR: ${{ vars.OPERATOR_CIDR }}
+      RUNNER_CIDR: ${{ vars.RUNNER_CIDR }}
+      CONTROL_PLANE_TYPE: ${{ vars.CONTROL_PLANE_TYPE }}
+      WORKER_TYPE: ${{ vars.WORKER_TYPE }}
+      WORKER_COUNT: ${{ vars.WORKER_COUNT }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2.0.2
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+      - name: Prepare cluster access
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p config "${{ runner.temp }}/ssh"
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "${{ runner.temp }}/ssh/deploy_key"
+          chmod 0600 "${{ runner.temp }}/ssh/deploy_key"
+          export SSH_PRIVATE_KEY="${{ runner.temp }}/ssh/deploy_key"
+          cat > config/project.env <<EOF
+          SCW_PROJECT_ID=$SCW_PROJECT_ID
+          SCW_REGION=$SCW_REGION
+          SCW_ZONE=$SCW_ZONE
+          OPERATOR_CIDR=$OPERATOR_CIDR
+          RUNNER_CIDR=$RUNNER_CIDR
+          CONTROL_PLANE_TYPE=$CONTROL_PLANE_TYPE
+          WORKER_TYPE=$WORKER_TYPE
+          WORKER_COUNT=$WORKER_COUNT
+          EOF
+          ./scripts/install-deploy-tools.sh >/dev/null
+          export PATH="$PWD/.deploy-venv/bin:$PATH"
+          ./scripts/bootstrap-state.sh >/dev/null
+          ./scripts/fetch-kubeconfig.sh >/dev/null
+          echo "KUBECONFIG=$PWD/.generated/kubeconfig" >> "$GITHUB_ENV"
+      - name: Controller diagnostics
+        run: |
+          set +e
+          kubectl -n sre-system get deployment/remediation-controller -o wide
+          kubectl -n sre-system get pods -l app.kubernetes.io/name=remediation-controller -o wide
+          kubectl -n sre-system describe deployment/remediation-controller
+          kubectl -n sre-system describe pods -l app.kubernetes.io/name=remediation-controller
+          echo '=== current logs ==='
+          kubectl -n sre-system logs -l app.kubernetes.io/name=remediation-controller --all-containers=true --tail=300
+          echo '=== previous logs ==='
+          for pod in $(kubectl -n sre-system get pods -l app.kubernetes.io/name=remediation-controller -o name); do
+            kubectl -n sre-system logs "$pod" --all-containers=true --previous --tail=300
+          done
+          echo '=== recent events ==='
+          kubectl -n sre-system get events --sort-by=.lastTimestamp | tail -n 80
