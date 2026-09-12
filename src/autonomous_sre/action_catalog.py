@@ -1,14 +1,14 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 
 import yaml
 
-from autonomous_sre.config import get_settings
 from autonomous_sre.models import RemediationPlan, Risk
 
 
 def _catalog_path() -> Path:
-    configured_path = Path(get_settings().action_catalog_path)
+    configured_path = Path(os.getenv("ACTION_CATALOG_PATH", "/app/remediation/catalog.yaml"))
     if configured_path.exists():
         return configured_path
     return Path(__file__).resolve().parents[2] / "remediation" / "catalog.yaml"
