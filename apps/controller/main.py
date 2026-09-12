@@ -10,31 +10,48 @@ from autonomous_sre.policy import PolicyClient
 from autonomous_sre.prometheus import PrometheusClient
 
 
-async def verify_recovery(plan: RemediationPlan) -> tuple[bool, dict[str, object]]:
-    if not plan.verification_query or plan.verification_threshold is None:
-        return True, {"verification": "no query configured"}
-
+async def verify_recovery(
+    plan: RemediationPlan,
+    executor: KubernetesExecutor,
+) -> tuple[bool, dict[str, object]]:
     settings = get_settings()
-    prom = PrometheusClient()
     deadline = asyncio.get_running_loop().time() + settings.recovery_verify_seconds
-    last_value: float | None = None
-    try:
-        while asyncio.get_running_loop().time() < deadline:
-            last_value = await prom.query(plan.verification_query)
-            if last_value is not None and last_value <= plan.verification_threshold:
-                return True, {
-                    "verification_query": plan.verification_query,
-                    "observed_value": last_value,
-                    "threshold": plan.verification_threshold,
-                }
-            await asyncio.sleep(5)
-    finally:
-        await prom.close()
 
-    return False, {
-        "verification_query": plan.verification_query,
-        "observed_value": last_value,
-        "threshold": plan.verification_threshold,
+    if plan.verification_query and plan.verification_threshold is not None:
+        prom = PrometheusClient()
+        last_value: float | None = None
+        try:
+            while asyncio.get_running_loop().time() < deadline:
+                last_value = await prom.query(plan.verification_query)
+                if last_value is not None and last_value <= plan.verification_threshold:
+                    return True, {
+                        "verification": "prometheus-threshold",
+                        "verification_query": plan.verification_query,
+                        "observed_value": last_value,
+                        "threshold": plan.verification_threshold,
+                    }
+                await asyncio.sleep(5)
+        finally:
+            await prom.close()
+
+        return False, {
+            "verification": "prometheus-threshold",
+            "verification_query": plan.verification_query,
+            "observed_value": last_value,
+            "threshold": plan.verification_threshold,
+        }
+
+    last_details: dict[str, object] = {}
+    while asyncio.get_running_loop().time() < deadline:
+        verified, details = await executor.verify(plan)
+        last_details = details
+        if verified:
+            return True, details
+        await asyncio.sleep(5)
+
+    return False, last_details or {
+        "verification": "kubernetes-state",
+        "reason": "verification timed out",
     }
 
 
@@ -93,10 +110,10 @@ async def main() -> None:
                 await record_agent_activity(
                     "recovery-verifier",
                     "working",
-                    "Checking post-remediation Prometheus signals",
+                    "Verifying the post-remediation service and Kubernetes state",
                     incident_id,
                 )
-                verified, verification = await verify_recovery(plan)
+                verified, verification = await verify_recovery(plan, executor)
                 await record_agent_activity(
                     "recovery-verifier",
                     "success" if verified else "error",
