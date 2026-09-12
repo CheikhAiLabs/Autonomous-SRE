@@ -55,6 +55,19 @@ load_scw_credentials() {
   export SCW_DEFAULT_PROJECT_ID="$SCW_PROJECT_ID"
   export SCW_DEFAULT_REGION="$SCW_REGION"
   export SCW_DEFAULT_ZONE="$SCW_ZONE"
+
+  if [ -z "${SCW_DEFAULT_ORGANIZATION_ID:-}" ]; then
+    SCW_DEFAULT_ORGANIZATION_ID="$(
+      scw account project get project-id="$SCW_PROJECT_ID" -o json \
+        | jq -r '.organization_id // .organizationId // empty'
+    )"
+  fi
+  [ -n "$SCW_DEFAULT_ORGANIZATION_ID" ] || {
+    echo "Unable to determine Scaleway Organization ID from project $SCW_PROJECT_ID" >&2
+    exit 1
+  }
+  export SCW_DEFAULT_ORGANIZATION_ID
+
   export AWS_ACCESS_KEY_ID="$SCW_ACCESS_KEY"
   export AWS_SECRET_ACCESS_KEY="$SCW_SECRET_KEY"
   export AWS_REGION="$SCW_REGION"
