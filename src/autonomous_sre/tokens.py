@@ -38,6 +38,7 @@ def verify_approval_token(token: str, incident_id: UUID) -> bool:
         if not hmac.compare_digest(sig, expected):
             return False
         payload = json.loads(raw.decode())
-        return payload["incident_id"] == str(incident_id) and int(payload["exp"]) >= int(time.time())
+        token_is_current = int(payload["exp"]) >= int(time.time())
+        return payload["incident_id"] == str(incident_id) and token_is_current
     except (ValueError, KeyError, TypeError, json.JSONDecodeError):
         return False
