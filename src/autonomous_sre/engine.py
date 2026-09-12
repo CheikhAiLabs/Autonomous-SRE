@@ -37,7 +37,7 @@ class IncidentEngine:
         labels = alert.get("labels") or {}
         stable = {
             key: labels.get(key)  # type: ignore[union-attr]
-            for key in ["alertname", "namespace", "pod", "deployment", "service"]
+            for key in ["alertname", "namespace", "pod", "deployment", "service", "node"]
         }
         return hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()[:32]
 
@@ -73,9 +73,14 @@ class IncidentEngine:
             "success",
             f"Detected managed alert {evidence.alert_name}",
             incident.id,
-            {"fingerprint": incident.fingerprint},
+            {"fingerprint": incident.fingerprint, "severity": labels.get("severity", "unknown")},
         )
-        await send_incident_email(incident, "INCIDENT DETECTED")
+        await record_agent_activity(
+            "case-manager",
+            "working",
+            "Incident opened and evidence collection started",
+            incident.id,
+        )
 
         diagnosis, plan, decision = await self.reasoning.run(evidence, incident.id)
         incident.diagnosis = diagnosis
@@ -86,6 +91,12 @@ class IncidentEngine:
         if plan is None or decision is None:
             incident.status = IncidentStatus.BLOCKED
             await save_incident(incident)
+            await record_agent_activity(
+                "case-manager",
+                "blocked",
+                "Incident requires manual investigation because no safe remediation was available",
+                incident.id,
+            )
             await send_incident_email(incident, "MANUAL INVESTIGATION REQUIRED")
             return
 
@@ -95,6 +106,12 @@ class IncidentEngine:
         if decision.result == PolicyResult.ALLOW:
             incident.status = IncidentStatus.REMEDIATING
             await save_incident(incident)
+            await record_agent_activity(
+                "case-manager",
+                "working",
+                f"Autonomous remediation authorised: {plan.action}",
+                incident.id,
+            )
             await publish(
                 self.nc,
                 "remediation.requested",
@@ -104,14 +121,26 @@ class IncidentEngine:
                     "mode": self.settings.auto_remediation_mode,
                 },
             )
-            await send_incident_email(incident, "AUTONOMOUS REMEDIATION STARTED")
         elif decision.result == PolicyResult.REQUIRE_APPROVAL:
             incident.status = IncidentStatus.PENDING_APPROVAL
             await save_incident(incident)
+            await record_agent_activity(
+                "case-manager",
+                "waiting",
+                f"Human approval required before {plan.action}",
+                incident.id,
+            )
             await send_incident_email(incident, "APPROVAL REQUIRED")
         else:
             incident.status = IncidentStatus.BLOCKED
             await save_incident(incident)
+            await record_agent_activity(
+                "case-manager",
+                "blocked",
+                f"Policy blocked remediation {plan.action}",
+                incident.id,
+                {"reason": decision.reason},
+            )
             await send_incident_email(incident, "ACTION BLOCKED BY POLICY")
 
     async def run(self) -> None:
