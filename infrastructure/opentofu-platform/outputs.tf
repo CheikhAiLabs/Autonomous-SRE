@@ -3,7 +3,10 @@ output "control_plane_public_ip" {
 }
 
 output "control_plane_private_ip" {
-  value = scaleway_instance_private_nic.control_plane.private_ips[0].address
+  value = one([
+    for ip in scaleway_instance_private_nic.control_plane.private_ips : ip.address
+    if !strcontains(ip.address, ":")
+  ])
 }
 
 output "control_plane_id" {
@@ -19,7 +22,12 @@ output "worker_public_ips" {
 }
 
 output "worker_private_ips" {
-  value = [for nic in scaleway_instance_private_nic.worker : nic.private_ips[0].address]
+  value = [
+    for nic in scaleway_instance_private_nic.worker : one([
+      for ip in nic.private_ips : ip.address
+      if !strcontains(ip.address, ":")
+    ])
+  ]
 }
 
 output "worker_ids" {

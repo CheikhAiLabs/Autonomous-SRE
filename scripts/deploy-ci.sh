@@ -8,12 +8,15 @@ load_scw_credentials
 
 progress 5 "Installing deployment tooling"
 "$ROOT/scripts/install-deploy-tools.sh"
-export PATH="$ROOT/.deploy-venv/bin:$PATH"
 
 progress 10 "Preparing Scaleway remote state"
 "$ROOT/scripts/bootstrap-state.sh"
 
-: "${RUNNER_CIDR:?RUNNER_CIDR must be supplied by the GitHub production environment}"
+if [ -z "${RUNNER_CIDR:-}" ]; then
+  echo "RUNNER_CIDR is required for production deployment." >&2
+  exit 1
+fi
+
 export TF_VAR_project_id="$SCW_PROJECT_ID"
 export TF_VAR_region="$SCW_REGION"
 export TF_VAR_zone="$SCW_ZONE"
@@ -24,35 +27,69 @@ export TF_VAR_worker_type="$WORKER_TYPE"
 export TF_VAR_worker_count="$WORKER_COUNT"
 
 progress 18 "Initializing OpenTofu platform stack"
-tofu -chdir="$ROOT/infrastructure/opentofu-platform" init -input=false -backend-config="$GENERATED/platform-backend.hcl"
+tofu -chdir="$ROOT/infrastructure/opentofu-platform" init \
+  -input=false \
+  -reconfigure \
+  -backend-config="$GENERATED/platform-backend.hcl"
 
 progress 30 "Provisioning Scaleway platform infrastructure"
 tofu -chdir="$ROOT/infrastructure/opentofu-platform" apply -input=false -auto-approve
 
 progress 45 "Preparing Ansible inventory and dependencies"
 "$ROOT/scripts/render-inventory.sh"
-ANSIBLE_CONFIG="$ROOT/infrastructure/ansible/ansible.cfg" \
-  ansible-galaxy collection install -r "$ROOT/infrastructure/ansible/requirements.yml" >/dev/null
+"$ROOT/.deploy-venv/bin/ansible-galaxy" collection install \
+  -r "$ROOT/infrastructure/ansible/requirements.yml" \
+  --force >/dev/null
+
+export ANSIBLE_ROLES_PATH="$ROOT/infrastructure/ansible/roles"
+export ANSIBLE_HOST_KEY_CHECKING=False
+export ANSIBLE_RETRY_FILES_ENABLED=False
+
+progress 50 "Waiting for all Scaleway nodes to accept SSH"
+ssh_ready=false
+for attempt in $(seq 1 30); do
+  if "$ROOT/.deploy-venv/bin/ansible" all \
+    -i "$GENERATED/inventory.ini" \
+    -m ansible.builtin.ping \
+    -T 5 \
+    -o >/dev/null 2>&1; then
+    ssh_ready=true
+    [ -t 1 ] && printf '\n' || true
+    break
+  fi
+  wait_progress "Waiting for cluster SSH" "$attempt" 30
+  sleep 10
+done
+
+if [ "$ssh_ready" != true ]; then
+  echo "Cluster nodes did not become reachable over SSH in time." >&2
+  "$ROOT/.deploy-venv/bin/ansible" all \
+    -i "$GENERATED/inventory.ini" \
+    -m ansible.builtin.ping \
+    -T 5 \
+    -o || true
+  exit 1
+fi
 
 progress 55 "Installing and configuring K3s cluster"
-ANSIBLE_CONFIG="$ROOT/infrastructure/ansible/ansible.cfg" \
-  ansible-playbook -i "$GENERATED/inventory.ini" "$ROOT/infrastructure/ansible/playbooks/cluster.yml"
+"$ROOT/.deploy-venv/bin/ansible-playbook" \
+  -i "$GENERATED/inventory.ini" \
+  "$ROOT/infrastructure/ansible/playbooks/cluster.yml"
 
-progress 65 "Fetching Kubernetes configuration"
+progress 65 "Fetching hardened kubeconfig"
 "$ROOT/scripts/fetch-kubeconfig.sh"
-export KUBECONFIG="$GENERATED/kubeconfig"
 
-progress 75 "Installing Cilium and platform services"
+progress 75 "Installing platform services"
 "$ROOT/scripts/install-platform.sh"
 
-progress 85 "Deploying Autonomous-SRE workloads"
+progress 85 "Rendering and applying Autonomous-SRE manifests"
 "$ROOT/scripts/render-manifests.sh"
 kubectl apply -f "$GENERATED/manifests"
 
 progress 92 "Initializing local AI model"
 "$ROOT/scripts/initialize-model.sh"
 
-progress 97 "Running end-to-end verification"
+progress 97 "Verifying end-to-end deployment"
 "$ROOT/scripts/verify.sh"
 
 progress 100 "Production deployment verified"
