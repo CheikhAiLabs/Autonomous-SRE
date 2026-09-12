@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  namespace: sre-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: opa}
+  template:
+    metadata:
+      labels: {app: opa}
+    spec:
+      containers:
+        - name: opa
+          image: openpolicyagent/opa:1.17.0-static
+          args: ["run", "--server", "--addr=0.0.0.0:8181", "/policies"]
+          ports:
+            - {name: http, containerPort: 8181}
+          readinessProbe:
+            httpGet: {path: "/health?bundles=true", port: http}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          volumeMounts:
+            - {name: policy, mountPath: /policies}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities: {drop: ["ALL"]}
+      volumes:
+        - name: policy
+          configMap: {name: opa-policy}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: sre-system
+spec:
+  selector: {app: opa}
+  ports:
+    - {name: http, port: 8181, targetPort: http}

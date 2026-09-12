@@ -1,0 +1,37 @@
+actions:
+  restart_deployment:
+    risk: low
+    max_blast_radius: 1
+    description: Restart one Deployment by patching its Pod template annotation.
+  rollback_deployment:
+    risk: low
+    max_blast_radius: 1
+    description: Restore the previous Deployment ReplicaSet template.
+  scale_deployment:
+    risk: low
+    max_blast_radius: 3
+    description: Scale one Deployment within a hard-coded 1..6 replica guardrail.
+  scale_deployment_extended:
+    risk: medium
+    max_blast_radius: 1
+    description: Scale one Deployment up to 10 replicas after explicit operator approval.
+  replace_single_pod:
+    risk: low
+    max_blast_radius: 1
+    description: Delete one controller-owned Pod so Kubernetes replaces it.
+  cordon_node:
+    risk: high
+    max_blast_radius: 1
+    description: Deliberately not implemented by the autonomous controller.
+  drain_node:
+    risk: forbidden
+    max_blast_radius: 0
+    description: Forbidden in v1 autonomous mode.
+  delete_namespace:
+    risk: forbidden
+    max_blast_radius: 0
+    description: Permanently forbidden.
+  destroy_infrastructure:
+    risk: forbidden
+    max_blast_radius: 0
+    description: Permanently forbidden.

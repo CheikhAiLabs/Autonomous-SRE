@@ -1,0 +1,29 @@
+mode: daemonset
+image:
+  repository: otel/opentelemetry-collector-contrib
+presets:
+  logsCollection:
+    enabled: true
+    includeCollectorLogs: false
+  kubernetesAttributes:
+    enabled: true
+  kubeletMetrics:
+    enabled: true
+config:
+  exporters:
+    otlphttp/tempo:
+      endpoint: http://tempo.observability.svc:4318
+    otlphttp/loki:
+      endpoint: http://loki.observability.svc:3100/otlp
+    debug:
+      verbosity: basic
+  service:
+    pipelines:
+      logs:
+        receivers: [filelog]
+        processors: [k8sattributes, batch]
+        exporters: [otlphttp/loki]
+      traces:
+        receivers: [otlp]
+        processors: [k8sattributes, batch]
+        exporters: [otlphttp/tempo]

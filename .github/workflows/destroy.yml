@@ -1,0 +1,67 @@
+name: Destroy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DESTROY to remove the Kubernetes platform. The runner and state bucket are preserved.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+  SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+  SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+  SCW_REGION: ${{ vars.SCW_REGION }}
+  SCW_ZONE: ${{ vars.SCW_ZONE }}
+  OPERATOR_CIDR: ${{ vars.OPERATOR_CIDR }}
+  RUNNER_CIDR: ${{ vars.RUNNER_CIDR }}
+  CONTROL_PLANE_TYPE: ${{ vars.CONTROL_PLANE_TYPE }}
+  WORKER_TYPE: ${{ vars.WORKER_TYPE }}
+  WORKER_COUNT: ${{ vars.WORKER_COUNT }}
+
+jobs:
+  destroy:
+    if: inputs.confirmation == 'DESTROY'
+    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    environment: production
+    concurrency: autonomous-sre-production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2.0.2
+        with:
+          tofu_version: 1.12.6
+      - name: Prepare config
+        run: |
+          mkdir -p config
+          cat > config/project.env <<EOF
+          SCW_PROJECT_ID=$SCW_PROJECT_ID
+          SCW_REGION=$SCW_REGION
+          SCW_ZONE=$SCW_ZONE
+          OPERATOR_CIDR=$OPERATOR_CIDR
+          ALERT_EMAIL=${{ vars.ALERT_EMAIL }}
+          GITHUB_REPOSITORY=${{ github.repository }}
+          CONTROL_PLANE_TYPE=$CONTROL_PLANE_TYPE
+          WORKER_TYPE=$WORKER_TYPE
+          WORKER_COUNT=$WORKER_COUNT
+          RUNNER_TYPE=DEV1-S
+          AUTO_REMEDIATION_MODE=${{ vars.AUTO_REMEDIATION_MODE }}
+          OLLAMA_MODEL=${{ vars.OLLAMA_MODEL }}
+          SMTP_SMARTHOST=${{ vars.SMTP_SMARTHOST }}
+          SMTP_USERNAME=${{ vars.SMTP_USERNAME }}
+          LETSENCRYPT_EMAIL=${{ vars.LETSENCRYPT_EMAIL }}
+          EOF
+          cat > config/secrets.env <<EOF
+          SMTP_PASSWORD=
+          APPROVAL_SIGNING_KEY=not-used-during-destroy
+          POSTGRES_PASSWORD=not-used-during-destroy
+          GHCR_PULL_TOKEN=
+          EOF
+          ./scripts/install-deploy-tools.sh
+      - name: Destroy platform
+        env:
+          AUTO_CONFIRM_DESTROY: DESTROY
+        run: ./scripts/destroy.sh

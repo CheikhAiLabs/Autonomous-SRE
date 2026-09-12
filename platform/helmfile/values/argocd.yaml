@@ -1,0 +1,12 @@
+configs:
+  params:
+    server.insecure: true
+server:
+  service:
+    type: ClusterIP
+controller:
+  metrics:
+    enabled: true
+repoServer:
+  metrics:
+    enabled: true

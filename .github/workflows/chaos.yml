@@ -1,0 +1,92 @@
+name: Chaos Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Safe chaos scenario
+        required: true
+        type: choice
+        default: pod-kill
+        options:
+          - pod-kill
+          - bad-release
+
+permissions:
+  contents: read
+
+env:
+  SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+  SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+  SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+  SCW_REGION: ${{ vars.SCW_REGION }}
+  SCW_ZONE: ${{ vars.SCW_ZONE }}
+  OPERATOR_CIDR: ${{ vars.OPERATOR_CIDR }}
+  RUNNER_CIDR: ${{ vars.RUNNER_CIDR }}
+  ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+  GITHUB_REPOSITORY: ${{ github.repository }}
+  CONTROL_PLANE_TYPE: ${{ vars.CONTROL_PLANE_TYPE }}
+  WORKER_TYPE: ${{ vars.WORKER_TYPE }}
+  WORKER_COUNT: ${{ vars.WORKER_COUNT }}
+  RUNNER_TYPE: DEV1-S
+  AUTO_REMEDIATION_MODE: ${{ vars.AUTO_REMEDIATION_MODE }}
+  OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL }}
+  SMTP_SMARTHOST: ${{ vars.SMTP_SMARTHOST }}
+  SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+  LETSENCRYPT_EMAIL: ${{ vars.LETSENCRYPT_EMAIL }}
+
+jobs:
+  chaos:
+    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    environment: production
+    concurrency: autonomous-sre-chaos
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: opentofu/setup-opentofu@v2.0.2
+        with:
+          tofu_version: 1.12.6
+      - name: Prepare access
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          APPROVAL_SIGNING_KEY: ${{ secrets.APPROVAL_SIGNING_KEY }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          mkdir -p config "${{ runner.temp }}/ssh"
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "${{ runner.temp }}/ssh/deploy_key"
+          chmod 0600 "${{ runner.temp }}/ssh/deploy_key"
+          echo "SSH_PRIVATE_KEY=${{ runner.temp }}/ssh/deploy_key" >> "$GITHUB_ENV"
+          cat > config/project.env <<EOF
+          SCW_PROJECT_ID=$SCW_PROJECT_ID
+          SCW_REGION=$SCW_REGION
+          SCW_ZONE=$SCW_ZONE
+          OPERATOR_CIDR=$OPERATOR_CIDR
+          ALERT_EMAIL=$ALERT_EMAIL
+          GITHUB_REPOSITORY=$GITHUB_REPOSITORY
+          CONTROL_PLANE_TYPE=$CONTROL_PLANE_TYPE
+          WORKER_TYPE=$WORKER_TYPE
+          WORKER_COUNT=$WORKER_COUNT
+          RUNNER_TYPE=$RUNNER_TYPE
+          AUTO_REMEDIATION_MODE=$AUTO_REMEDIATION_MODE
+          OLLAMA_MODEL=$OLLAMA_MODEL
+          SMTP_SMARTHOST=$SMTP_SMARTHOST
+          SMTP_USERNAME=$SMTP_USERNAME
+          LETSENCRYPT_EMAIL=$LETSENCRYPT_EMAIL
+          EOF
+          cat > config/secrets.env <<EOF
+          SMTP_PASSWORD=$SMTP_PASSWORD
+          APPROVAL_SIGNING_KEY=$APPROVAL_SIGNING_KEY
+          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+          GHCR_PULL_TOKEN=${{ secrets.GHCR_PULL_TOKEN || github.token }}
+          EOF
+          chmod 0600 config/secrets.env
+          ./scripts/install-deploy-tools.sh
+          export PATH="$PWD/.deploy-venv/bin:$PATH"
+          ./scripts/bootstrap-state.sh
+          ./scripts/fetch-kubeconfig.sh
+      - name: Run chaos scenario
+        run: ./scripts/chaos.sh '${{ inputs.scenario }}'

@@ -1,0 +1,112 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Build Images]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: autonomous-sre-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'workflow_dispatch' && vars.AUTOMATIC_DEPLOY == 'true')
+    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    environment: production
+    timeout-minutes: 90
+    env:
+      SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+      SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+      SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+      SCW_REGION: ${{ vars.SCW_REGION }}
+      SCW_ZONE: ${{ vars.SCW_ZONE }}
+      OPERATOR_CIDR: ${{ vars.OPERATOR_CIDR }}
+      RUNNER_CIDR: ${{ vars.RUNNER_CIDR }}
+      ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+      CONTROL_PLANE_TYPE: ${{ vars.CONTROL_PLANE_TYPE }}
+      WORKER_TYPE: ${{ vars.WORKER_TYPE }}
+      WORKER_COUNT: ${{ vars.WORKER_COUNT }}
+      AUTO_REMEDIATION_MODE: ${{ vars.AUTO_REMEDIATION_MODE }}
+      OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL }}
+      SMTP_SMARTHOST: ${{ vars.SMTP_SMARTHOST }}
+      SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+      LETSENCRYPT_EMAIL: ${{ vars.LETSENCRYPT_EMAIL }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      APPROVAL_SIGNING_KEY: ${{ secrets.APPROVAL_SIGNING_KEY }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN || github.token }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_ACTOR: ${{ github.actor }}
+      IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - uses: opentofu/setup-opentofu@v2.0.2
+        with:
+          tofu_version: 1.12.6
+
+      - name: Prepare SSH key and portable config
+        shell: bash
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          install -m 0700 -d "${{ runner.temp }}/ssh"
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "${{ runner.temp }}/ssh/deploy_key"
+          chmod 0600 "${{ runner.temp }}/ssh/deploy_key"
+          echo "SSH_PRIVATE_KEY=${{ runner.temp }}/ssh/deploy_key" >> "$GITHUB_ENV"
+          mkdir -p config
+          cat > config/project.env <<EOF
+          SCW_PROJECT_ID=$SCW_PROJECT_ID
+          SCW_REGION=$SCW_REGION
+          SCW_ZONE=$SCW_ZONE
+          OPERATOR_CIDR=$OPERATOR_CIDR
+          ALERT_EMAIL=$ALERT_EMAIL
+          GITHUB_REPOSITORY=$GITHUB_REPOSITORY
+          CONTROL_PLANE_TYPE=$CONTROL_PLANE_TYPE
+          WORKER_TYPE=$WORKER_TYPE
+          WORKER_COUNT=$WORKER_COUNT
+          RUNNER_TYPE=DEV1-S
+          AUTO_REMEDIATION_MODE=$AUTO_REMEDIATION_MODE
+          OLLAMA_MODEL=$OLLAMA_MODEL
+          SMTP_SMARTHOST=$SMTP_SMARTHOST
+          SMTP_USERNAME=$SMTP_USERNAME
+          LETSENCRYPT_EMAIL=$LETSENCRYPT_EMAIL
+          EOF
+          cat > config/secrets.env <<EOF
+          SMTP_PASSWORD=$SMTP_PASSWORD
+          APPROVAL_SIGNING_KEY=$APPROVAL_SIGNING_KEY
+          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+          GHCR_PULL_TOKEN=$GHCR_PULL_TOKEN
+          EOF
+          chmod 0600 config/secrets.env
+
+      - name: Deploy and verify
+        run: make deploy-ci
+
+      - name: Publish deployment summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Autonomous-SRE production deployment'
+            if [ -f .generated/platform-fqdn ]; then
+              echo "- Dashboard: https://$(cat .generated/platform-fqdn)"
+            fi
+            echo "- Commit: \`${IMAGE_TAG}\`"
+            echo "- Alert recipient: \`${ALERT_EMAIL}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

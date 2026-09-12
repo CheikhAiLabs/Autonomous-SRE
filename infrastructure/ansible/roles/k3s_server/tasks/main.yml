@@ -1,0 +1,50 @@
+---
+- name: Install Kubernetes audit policy
+  ansible.builtin.template:
+    src: audit-policy.yaml.j2
+    dest: /etc/rancher/k3s/audit-policy.yaml
+    mode: '0600'
+
+- name: Install K3s server
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -sfL https://get.k3s.io | \
+      INSTALL_K3S_VERSION="{{ k3s_version }}" \
+      sh -s - server \
+      --flannel-backend=none \
+      --disable-network-policy \
+      --disable-kube-proxy \
+      --disable=traefik \
+      --node-ip="{{ private_ip }}" \
+      --node-label=autonomous-sre/role=control-plane \
+      --advertise-address="{{ private_ip }}" \
+      --tls-san="{{ ansible_host }}" \
+      --cluster-cidr=10.42.0.0/16 \
+      --service-cidr=10.43.0.0/16 \
+      --write-kubeconfig-mode=640 \
+      --secrets-encryption \
+      --kube-apiserver-arg=audit-policy-file=/etc/rancher/k3s/audit-policy.yaml \
+      --kube-apiserver-arg=audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log \
+      --kube-apiserver-arg=audit-log-maxage=14 \
+      --kube-apiserver-arg=audit-log-maxbackup=10 \
+      --kube-apiserver-arg=audit-log-maxsize=100
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Wait for K3s API
+  ansible.builtin.command: k3s kubectl get --raw=/readyz
+  register: readyz
+  retries: 30
+  delay: 5
+  until: readyz.rc == 0
+  changed_when: false
+
+- name: Read K3s node token
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  register: node_token
+
+- name: Expose token as host fact
+  ansible.builtin.set_fact:
+    k3s_token: "{{ node_token.content | b64decode | trim }}"
