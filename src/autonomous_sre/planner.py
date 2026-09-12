@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from autonomous_sre.models import Diagnosis, Evidence, RemediationPlan, Risk
-
+from autonomous_sre.models import (
+    Diagnosis,
+    Evidence,
+    RemediationPlan,
+    Risk,
+)
 
 SCALING_ACTIONS = {
     "scale_deployment",
