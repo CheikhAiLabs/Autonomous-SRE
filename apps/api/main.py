@@ -46,11 +46,14 @@ async def healthz() -> dict[str, str]:
 @app.get("/api/v1/system")
 async def system() -> dict[str, object]:
     settings = get_settings()
+    mail_enabled = bool(
+        settings.smtp_username and settings.smtp_password and settings.alert_email
+    )
     return {
         "environment": settings.environment,
         "mode": settings.auto_remediation_mode,
         "poll_interval_seconds": settings.incident_poll_interval_seconds,
-        "mail_enabled": bool(settings.smtp_username and settings.smtp_password and settings.alert_email),
+        "mail_enabled": mail_enabled,
         "report_recipient": settings.alert_email if settings.alert_email else None,
     }
 
