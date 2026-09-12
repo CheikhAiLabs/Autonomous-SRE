@@ -11,8 +11,8 @@ DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
 
 ARCH="$(uname -m)"
 case "$ARCH" in
-  x86_64) BIN_ARCH=amd64 ;;
-  aarch64|arm64) BIN_ARCH=arm64 ;;
+  x86_64) BIN_ARCH=amd64; AWS_ARCH=x86_64 ;;
+  aarch64|arm64) BIN_ARCH=arm64; AWS_ARCH=aarch64 ;;
   *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
 
@@ -27,6 +27,15 @@ if ! command -v scw >/dev/null 2>&1 || ! scw version 2>/dev/null | grep -q "$SCA
   install_url \
     "https://github.com/scaleway/scaleway-cli/releases/download/v${SCALEWAY_CLI_VERSION}/scaleway-cli_${SCALEWAY_CLI_VERSION}_linux_${BIN_ARCH}" \
     /usr/local/bin/scw
+fi
+
+if ! command -v aws >/dev/null 2>&1; then
+  echo "Installing AWS CLI v2 for Scaleway S3-compatible operations..."
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscliv2.zip
+  rm -rf /tmp/aws
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  sudo /tmp/aws/install --update
+  rm -rf /tmp/aws /tmp/awscliv2.zip
 fi
 
 if ! command -v kubectl >/dev/null 2>&1 || ! kubectl version --client 2>/dev/null | grep -q "v${KUBECTL_VERSION}"; then
@@ -58,6 +67,7 @@ python3 -m venv "$VENV"
 
 echo "Deployment tools ready"
 scw version | head -n1
+aws --version
 kubectl version --client
 helm version --short
 helmfile --version
