@@ -29,7 +29,7 @@ async def send_incident_email(incident: Incident, subject_prefix: str) -> None:
     plan = incident.plan
     diagnosis = incident.diagnosis
     policy = incident.policy
-    result = incident.remediation_result
+    result = incident.remediation_result or {}
     duration = int((incident.updated_at - incident.created_at).total_seconds())
 
     body = [
@@ -63,12 +63,12 @@ async def send_incident_email(incident: Incident, subject_prefix: str) -> None:
         [
             "",
             "POLICY",
-            f"Decision: {policy.result if policy else 'pending'}",
+            f"Decision: {policy.result.value if policy else 'pending'}",
             f"Reason: {policy.reason if policy else 'pending'}",
             "",
             "RESULT",
-            f"Success: {result.success if result else 'pending'}",
-            f"Message: {result.message if result else 'pending'}",
+            f"Success: {result.get('success', 'pending')}",
+            f"Message: {result.get('message', 'pending')}",
         ]
     )
 
