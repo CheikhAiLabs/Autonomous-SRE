@@ -11,12 +11,13 @@ permissions:
   contents: read
   packages: read
 
-# Production deployment is singleton. If a newer validated revision is ready,
-# stop the obsolete run instead of letting it block the runner for up to 90 min.
-# Platform install scripts recover interrupted Helm operations before upgrading.
+# Production deployment is singleton and serialized. Never interrupt a live
+# infrastructure/Helm reconciliation: a later validated revision waits for the
+# current deployment to finish, which avoids leaving Helm releases or CRDs in
+# transient states.
 concurrency:
   group: autonomous-sre-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
