@@ -7,7 +7,7 @@ source "$ROOT/config/tool-versions.env"
 
 sudo apt-get update -y
 DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
-  ca-certificates curl git jq rsync unzip openssh-client gettext-base python3 python3-venv tar gzip
+  ca-certificates curl git jq rsync unzip openssh-client gettext-base python3 python3-venv tar gzip nodejs
 
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -68,6 +68,7 @@ python3 -m venv "$VENV"
 echo "Deployment tools ready"
 scw version | head -n1
 aws --version
+node --version
 kubectl version --client
 helm version --short
 helmfile --version
