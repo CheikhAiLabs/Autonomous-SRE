@@ -9,7 +9,27 @@ test_low_risk_rollback_allowed if {
     "risk": "low",
     "namespace": "demo",
     "blast_radius": 1
-  } == {"result": "allow", "reason": "Low-risk action is permitted in autonomous mode"}
+  } == {"result": "allow", "reason": "Guardrailed low/medium-risk action is permitted in autonomous mode"}
+}
+
+test_medium_risk_scaling_allowed if {
+  remediation.decision with input as {
+    "mode": "autonomous-low-risk",
+    "action": "scale_deployment_extended",
+    "risk": "medium",
+    "namespace": "demo",
+    "blast_radius": 3
+  } == {"result": "allow", "reason": "Guardrailed low/medium-risk action is permitted in autonomous mode"}
+}
+
+test_high_risk_cordon_requires_approval if {
+  remediation.decision with input as {
+    "mode": "autonomous-low-risk",
+    "action": "cordon_node",
+    "risk": "high",
+    "namespace": "demo",
+    "blast_radius": 1
+  } == {"result": "require_approval", "reason": "High-impact remediation requires explicit operator approval"}
 }
 
 test_protected_namespace_denied if {
@@ -32,12 +52,12 @@ test_destroy_denied if {
   } == {"result": "deny", "reason": "Action is explicitly forbidden"}
 }
 
-test_medium_risk_requires_approval if {
+test_drain_denied_even_if_approved if {
   remediation.decision with input as {
-    "mode": "autonomous-low-risk",
-    "action": "scale_deployment_extended",
-    "risk": "medium",
+    "mode": "approved",
+    "action": "drain_node",
+    "risk": "forbidden",
     "namespace": "demo",
-    "blast_radius": 1
-  } == {"result": "require_approval", "reason": "Risk level requires human approval"}
+    "blast_radius": 0
+  } == {"result": "deny", "reason": "Action is explicitly forbidden"}
 }
