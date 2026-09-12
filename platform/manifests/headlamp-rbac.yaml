@@ -4,7 +4,13 @@ metadata:
   name: autonomous-sre-headlamp-viewer
 rules:
   - apiGroups: [""]
-    resources: ["configmaps", "endpoints", "events", "limitranges", "namespaces", "nodes", "persistentvolumeclaims", "persistentvolumes", "pods", "pods/log", "replicationcontrollers", "resourcequotas", "services", "serviceaccounts"]
+    resources: ["configmaps", "endpoints", "events", "limitranges", "namespaces", "nodes", "persistentvolumeclaims", "persistentvolumes", "pods", "pods/log", "pods/status", "replicationcontrollers", "resourcequotas", "services", "serviceaccounts"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources: ["daemonsets", "deployments", "replicasets", "statefulsets"]
