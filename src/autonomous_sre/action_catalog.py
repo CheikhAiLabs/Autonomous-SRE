@@ -7,12 +7,21 @@ from autonomous_sre.config import get_settings
 from autonomous_sre.models import RemediationPlan, Risk
 
 
+def _catalog_path() -> Path:
+    configured_path = Path(get_settings().action_catalog_path)
+    if configured_path.exists():
+        return configured_path
+    return Path(__file__).resolve().parents[2] / "remediation" / "catalog.yaml"
+
+
 @lru_cache
 def load_catalog() -> dict[str, dict[str, object]]:
-    configured_path = Path(get_settings().action_catalog_path)
-    path = configured_path if configured_path.exists() else Path("remediation/catalog.yaml")
+    path = _catalog_path()
     data = yaml.safe_load(path.read_text())
-    return data["actions"]
+    actions = data.get("actions") if isinstance(data, dict) else None
+    if not isinstance(actions, dict):
+        raise ValueError(f"Invalid remediation catalog at {path}")
+    return actions
 
 
 def get_action_rule(action: str) -> dict[str, object]:
