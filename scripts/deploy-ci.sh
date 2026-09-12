@@ -107,9 +107,9 @@ for attempt in $(seq 1 60); do
   fi
 
   template_json="$(kubectl get constrainttemplate "$GATEKEEPER_TEMPLATE" -o json 2>/dev/null || true)"
-  if [ -n "$template_json" ] && printf '%s' "$template_json" | jq -e '.status.errors? | length > 0' >/dev/null 2>&1; then
+  if [ -n "$template_json" ] && printf '%s' "$template_json" | jq -e '[.status.byPod[]?.errors[]?] | length > 0' >/dev/null 2>&1; then
     echo "Gatekeeper rejected ConstraintTemplate $GATEKEEPER_TEMPLATE:" >&2
-    printf '%s' "$template_json" | jq '.status.errors' >&2
+    printf '%s' "$template_json" | jq '[.status.byPod[]?.errors[]?]' >&2
     exit 1
   fi
 
