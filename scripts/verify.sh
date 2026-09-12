@@ -77,6 +77,21 @@ kubectl -n demo rollout status deployment/demo-service --timeout=3m >/dev/null &
 kubectl get --raw '/api/v1/namespaces/sre-system/services/http:autonomous-sre-api:8000/proxy/healthz' | grep -q 'ok' && pass "API health endpoint" || fail "API health endpoint"
 kubectl get --raw '/api/v1/namespaces/demo/services/http:demo-service:8080/proxy/healthz' | grep -q 'ok' && pass "Demo health endpoint" || fail "Demo health endpoint"
 
+AGENTS_JSON="$(kubectl get --raw '/api/v1/namespaces/sre-system/services/http:autonomous-sre-api:8000/proxy/api/v1/agents')"
+if printf '%s' "$AGENTS_JSON" | jq -e '
+  any(.[]; .name == "remediation-controller") and
+  any(.[]; .name == "recovery-verifier")
+' >/dev/null; then
+  pass "Remediation control-plane heartbeat"
+else
+  echo "Remediation controller/verifier did not register in the shared incident database." >&2
+  diagnose_workload \
+    "sre-system" \
+    "deployment/remediation-controller" \
+    "app.kubernetes.io/name=remediation-controller"
+  fail "Remediation control-plane heartbeat"
+fi
+
 kubectl -n sre-system exec deployment/ollama -- ollama list >/dev/null && pass "Local Ollama runtime" || fail "Local Ollama runtime"
 
 if kubectl -n sre-system wait certificate/autonomous-sre --for=condition=Ready --timeout=5m >/dev/null 2>&1; then
