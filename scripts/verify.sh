@@ -18,7 +18,12 @@ diagnose_workload() {
   kubectl -n "$namespace" get pods -l "$selector" -o wide || true
   kubectl -n "$namespace" describe "$resource" || true
   kubectl -n "$namespace" describe pods -l "$selector" || true
+  echo "Current container logs:"
   kubectl -n "$namespace" logs -l "$selector" --all-containers=true --tail=200 || true
+  echo "Previous container logs:"
+  for pod in $(kubectl -n "$namespace" get pods -l "$selector" -o name 2>/dev/null); do
+    kubectl -n "$namespace" logs "$pod" --all-containers=true --previous --tail=200 || true
+  done
   kubectl -n "$namespace" get events --sort-by=.lastTimestamp | tail -n 50 || true
 }
 
@@ -34,6 +39,14 @@ IMAGE_PULL_FAILURES="$(
 )"
 if [ -n "$IMAGE_PULL_FAILURES" ]; then
   echo "$IMAGE_PULL_FAILURES" >&2
+
+  if printf '%s\n' "$IMAGE_PULL_FAILURES" | grep -q '^sre-system/remediation-controller-'; then
+    diagnose_workload \
+      "sre-system" \
+      "deployment/remediation-controller" \
+      "app.kubernetes.io/name=remediation-controller"
+  fi
+
   fail "Container startup health"
 else
   pass "Container startup health"
@@ -48,7 +61,15 @@ else
 fi
 kubectl -n sre-system rollout status deployment/autonomous-sre-api --timeout=4m >/dev/null && pass "SRE API" || fail "SRE API"
 kubectl -n sre-system rollout status deployment/autonomous-sre-worker --timeout=4m >/dev/null && pass "Incident worker" || fail "Incident worker"
-kubectl -n sre-system rollout status deployment/remediation-controller --timeout=4m >/dev/null && pass "Remediation controller" || fail "Remediation controller"
+if kubectl -n sre-system rollout status deployment/remediation-controller --timeout=4m >/dev/null; then
+  pass "Remediation controller"
+else
+  diagnose_workload \
+    "sre-system" \
+    "deployment/remediation-controller" \
+    "app.kubernetes.io/name=remediation-controller"
+  fail "Remediation controller"
+fi
 kubectl -n sre-system rollout status deployment/headlamp --timeout=4m >/dev/null && pass "Kubernetes Explorer" || fail "Kubernetes Explorer"
 kubectl -n sre-system rollout status deployment/autonomous-sre-dashboard --timeout=4m >/dev/null && pass "Dashboard" || fail "Dashboard"
 kubectl -n demo rollout status deployment/demo-service --timeout=3m >/dev/null && pass "Demo workload" || fail "Demo workload"
