@@ -152,6 +152,12 @@ for manifest in "$MANIFESTS"/*.yaml; do
   kubectl apply -f "$manifest"
 done
 
+# The OPA policy is rendered as a ConfigMap. Reapplying an unchanged Deployment
+# does not restart its pods or clear an earlier ProgressDeadlineExceeded state.
+# Start a fresh rollout so OPA loads the current policy before verification.
+echo "Restarting OPA to load the rendered policy"
+kubectl -n sre-system rollout restart deployment/opa
+
 progress 92 "Initializing local AI model"
 "$ROOT/scripts/initialize-model.sh"
 
