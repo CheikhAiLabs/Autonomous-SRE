@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help init configure check fmt test plan deploy deploy-all deploy-ci verify status logs chaos-smoke chaos-bad-release access destroy destroy-all
+.PHONY: help init configure check fmt test plan deploy deploy-all deploy-ci verify status logs headlamp-token chaos-smoke chaos-bad-release access destroy destroy-all
 
 help:
 	@echo "Autonomous-SRE"
@@ -17,6 +17,7 @@ help:
 	@echo "  make verify             Run end-to-end verification"
 	@echo "  make status             Show cluster and SRE status"
 	@echo "  make logs               Follow Autonomous-SRE logs"
+	@echo "  make headlamp-token     Create an 8-hour Kubernetes Explorer login token"
 	@echo "  make chaos-smoke        Run safe Pod kill scenario"
 	@echo "  make chaos-bad-release  Run the autonomous rollback scenario"
 	@echo "  make access             Refresh operator CIDR"
@@ -63,6 +64,9 @@ status:
 
 logs:
 	@./scripts/logs.sh
+
+headlamp-token:
+	@kubectl --kubeconfig="$(CURDIR)/.generated/kubeconfig" -n sre-system create token headlamp --duration=8h
 
 chaos-smoke:
 	@./scripts/chaos.sh pod-kill

@@ -13,6 +13,8 @@ repositories:
     url: https://open-policy-agent.github.io/gatekeeper/charts
   - name: cilium
     url: https://helm.cilium.io
+  - name: headlamp
+    url: https://kubernetes-sigs.github.io/headlamp/
 
 releases:
   - name: cert-manager
@@ -101,3 +103,28 @@ releases:
         export:
           stdout:
             enabledCommand: true
+
+  - name: headlamp
+    namespace: sre-system
+    createNamespace: true
+    chart: headlamp/headlamp
+    version: 0.45.0
+    values:
+      - config:
+          inCluster: true
+          baseURL: /kubernetes
+          unsafeUseServiceAccountToken: false
+          enableHelm: false
+          staticPlugins:
+            enabled: true
+        serviceAccount:
+          create: true
+          name: headlamp
+        clusterRoleBinding:
+          create: false
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            memory: 256Mi

@@ -34,6 +34,7 @@ fi
 kubectl -n sre-system rollout status deployment/autonomous-sre-api --timeout=4m >/dev/null && pass "SRE API" || fail "SRE API"
 kubectl -n sre-system rollout status deployment/autonomous-sre-worker --timeout=4m >/dev/null && pass "Incident worker" || fail "Incident worker"
 kubectl -n sre-system rollout status deployment/remediation-controller --timeout=4m >/dev/null && pass "Remediation controller" || fail "Remediation controller"
+kubectl -n sre-system rollout status deployment/headlamp --timeout=4m >/dev/null && pass "Kubernetes Explorer" || fail "Kubernetes Explorer"
 kubectl -n sre-system rollout status deployment/autonomous-sre-dashboard --timeout=4m >/dev/null && pass "Dashboard" || fail "Dashboard"
 kubectl -n demo rollout status deployment/demo-service --timeout=3m >/dev/null && pass "Demo workload" || fail "Demo workload"
 
@@ -49,4 +50,7 @@ else
 fi
 
 FQDN="$(cat "$ROOT/.generated/platform-fqdn" 2>/dev/null || true)"
-[ -n "$FQDN" ] && echo "Dashboard: https://$FQDN"
+if [ -n "$FQDN" ]; then
+  echo "Dashboard: https://$FQDN"
+  echo "Kubernetes Explorer: https://$FQDN/kubernetes/"
+fi

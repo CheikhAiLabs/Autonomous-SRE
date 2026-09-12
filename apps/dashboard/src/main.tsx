@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Activity, CheckCircle2, ShieldAlert, Zap } from 'lucide-react'
+import { Activity, Boxes, CheckCircle2, ShieldAlert, Zap } from 'lucide-react'
 import './styles.css'
 
 type Incident = {
@@ -49,7 +49,13 @@ function App() {
   }
 
   return <div className="shell">
-    <header><div><span className="eyebrow">CHEIKHAILABS</span><h1>Autonomous SRE</h1></div><div className="mode">AUTONOMOUS LOW RISK</div></header>
+    <header>
+      <div><span className="eyebrow">CHEIKHAILABS</span><h1>Autonomous SRE</h1></div>
+      <div className="header-actions">
+        <a className="cluster-link" href="/kubernetes/"><Boxes size={17}/>Kubernetes Explorer</a>
+        <div className="mode">AUTONOMOUS LOW RISK</div>
+      </div>
+    </header>
     <section className="grid stats">
       <Card icon={<Activity/>} label="Active incidents" value={stats.active}/>
       <Card icon={<CheckCircle2/>} label="Recovered" value={stats.recovered}/>
