@@ -5,6 +5,7 @@ from email.message import EmailMessage
 import aiosmtplib
 
 from autonomous_sre.config import get_settings
+from autonomous_sre.database import record_agent_activity
 from autonomous_sre.models import Incident
 from autonomous_sre.tokens import create_approval_token
 
@@ -22,6 +23,13 @@ def _format_duration(seconds: int) -> str:
 async def send_incident_email(incident: Incident, subject_prefix: str) -> None:
     settings = get_settings()
     if not settings.smtp_password or not settings.smtp_username or not settings.alert_email:
+        await record_agent_activity(
+            "notification",
+            "skipped",
+            "Incident email was not sent because SMTP is not fully configured",
+            incident.id,
+            {"subject": subject_prefix},
+        )
         return
 
     token = create_approval_token(incident.id)
@@ -33,17 +41,19 @@ async def send_incident_email(incident: Incident, subject_prefix: str) -> None:
     duration = int((incident.updated_at - incident.created_at).total_seconds())
 
     body = [
-        "AUTONOMOUS SRE - INTERVENTION REPORT",
+        "AUTONOMOUS SRE - INCIDENT REPORT",
         "",
         f"Incident ID: {incident.id}",
         f"Status: {incident.status.value}",
         f"Started: {incident.created_at.isoformat()}",
         f"Last update: {incident.updated_at.isoformat()}",
         f"Duration: {_format_duration(duration)}",
+        f"Signal: {incident.evidence.alert_name}",
         "",
         "DIAGNOSIS",
         f"Root cause: {diagnosis.probable_cause if diagnosis else 'pending'}",
         f"Confidence: {round((diagnosis.confidence if diagnosis else 0) * 100)}%",
+        f"Rationale: {diagnosis.rationale if diagnosis and diagnosis.rationale else 'n/a'}",
         "",
         "REMEDIATION",
     ]
@@ -53,7 +63,8 @@ async def send_incident_email(incident: Incident, subject_prefix: str) -> None:
             [
                 f"Action: {plan.action}",
                 f"Risk: {plan.risk.value}",
-                f"Target: {plan.namespace}/{plan.target_name}",
+                f"Target: {plan.target_kind} {plan.namespace}/{plan.target_name}",
+                f"Blast radius: {plan.blast_radius}",
             ]
         )
     else:
@@ -71,6 +82,12 @@ async def send_incident_email(incident: Incident, subject_prefix: str) -> None:
             f"Message: {result.get('message', 'pending')}",
         ]
     )
+
+    details = result.get("details") or {}
+    if isinstance(details, dict) and details:
+        verification = details.get("post_remediation")
+        if verification:
+            body.extend(["Verification: " + str(verification)])
 
     if incident.status.value == "pending_approval":
         body.extend(["", "ACTION REQUIRED", "Review and approve/reject:", link])
@@ -102,5 +119,19 @@ async def send_incident_email(incident: Incident, subject_prefix: str) -> None:
             start_tls=True,
             timeout=20,
         )
+        await record_agent_activity(
+            "notification",
+            "success",
+            "Incident report email delivered",
+            incident.id,
+            {"recipient": settings.alert_email, "subject": subject_prefix},
+        )
     except Exception as exc:
+        await record_agent_activity(
+            "notification",
+            "error",
+            "Incident report email delivery failed",
+            incident.id,
+            {"error": str(exc), "subject": subject_prefix},
+        )
         print(f"email-notification-error: {exc}", flush=True)
