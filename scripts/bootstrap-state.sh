@@ -6,15 +6,35 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 load_config
 load_scw_credentials
 
-BUCKET="cheikhailabs-autonomous-sre-tfstate-${SCW_PROJECT_ID:0:12}"
+BUCKET="${STATE_BUCKET:-cheikhailabs-autonomous-sre-tfstate-${SCW_PROJECT_ID:0:13}}"
+ENDPOINT="https://s3.${SCW_REGION}.scw.cloud"
 
-if ! scw object bucket list region="$SCW_REGION" project-id="$SCW_PROJECT_ID" -o json | jq -e --arg n "$BUCKET" '.[] | select(.name==$n)' >/dev/null; then
+bucket_exists() {
+  aws \
+    --endpoint-url "$ENDPOINT" \
+    s3api head-bucket \
+    --bucket "$BUCKET" \
+    >/dev/null 2>&1
+}
+
+if bucket_exists; then
+  echo "Remote-state bucket already exists: $BUCKET"
+else
   echo "Creating remote-state bucket: $BUCKET"
-  scw object bucket create name="$BUCKET" region="$SCW_REGION" project-id="$SCW_PROJECT_ID" >/dev/null
+  scw object bucket create \
+    name="$BUCKET" \
+    region="$SCW_REGION" \
+    enable-versioning=true \
+    >/dev/null
+  echo "Remote-state bucket created: $BUCKET"
 fi
 
-# Best-effort versioning. Older/newer CLI shapes may expose this field differently.
-scw object bucket update "$BUCKET" region="$SCW_REGION" versioning.enabled=true >/dev/null 2>&1 || true
+aws \
+  --endpoint-url "$ENDPOINT" \
+  s3api put-bucket-versioning \
+  --bucket "$BUCKET" \
+  --versioning-configuration Status=Enabled \
+  >/dev/null
 
 generate_backend() {
   local key="$1" dest="$2"
@@ -23,12 +43,12 @@ bucket = "$BUCKET"
 key    = "$key"
 region = "$SCW_REGION"
 endpoints = {
-  s3 = "https://s3.${SCW_REGION}.scw.cloud"
+  s3 = "$ENDPOINT"
 }
-use_lockfile                  = true
-skip_credentials_validation  = true
-skip_region_validation       = true
-skip_requesting_account_id   = true
+use_lockfile                 = true
+skip_credentials_validation = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
 EOF
 }
 
