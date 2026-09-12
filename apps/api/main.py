@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
@@ -58,12 +58,16 @@ async def approve(incident_id: UUID, req: ApprovalRequest) -> dict[str, str]:
     if not verify_approval_token(req.token, incident_id):
         raise HTTPException(403, "invalid or expired approval token")
     item.status = IncidentStatus.REMEDIATING
-    item.updated_at = datetime.now(timezone.utc)
+    item.updated_at = datetime.now(UTC)
     await save_incident(item)
     await publish(
         nc,
         "remediation.requested",
-        {"incident_id": str(item.id), "plan": item.plan.model_dump(mode="json"), "mode": "approved"},
+        {
+            "incident_id": str(item.id),
+            "plan": item.plan.model_dump(mode="json"),
+            "mode": "approved",
+        },
     )
     return {"status": "approved"}
 
@@ -78,6 +82,6 @@ async def reject(incident_id: UUID, req: ApprovalRequest) -> dict[str, str]:
     if not verify_approval_token(req.token, incident_id):
         raise HTTPException(403, "invalid or expired approval token")
     item.status = IncidentStatus.REJECTED
-    item.updated_at = datetime.now(timezone.utc)
+    item.updated_at = datetime.now(UTC)
     await save_incident(item)
     return {"status": "rejected"}
