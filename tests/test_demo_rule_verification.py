@@ -1,13 +1,10 @@
-from pathlib import Path
-
-
-RULE_TEMPLATE = (
-    Path(__file__).parents[1] / "platform" / "manifests" / "demo-service.yaml.tpl"
-)
-
-
 def test_high_5xx_recovery_query_treats_absent_error_series_as_zero():
-    text = RULE_TEMPLATE.read_text()
+    with open(
+        "platform/manifests/demo-service.yaml.tpl",
+        encoding="utf-8",
+    ) as handle:
+        text = handle.read()
+
     verify_line = next(
         line.strip()
         for line in text.splitlines()
