@@ -72,18 +72,139 @@ if [ "$ssh_ready" != true ]; then
   exit 1
 fi
 
-progress 55 "Installing and configuring K3s cluster"
-"$ROOT/.deploy-venv/bin/ansible-playbook" \
-  -i "$GENERATED/inventory.ini" \
-  "$ROOT/infrastructure/ansible/playbooks/cluster.yml"
+EXPECTED_NODE_COUNT="$((WORKER_COUNT + 1))"
+DESIRED_K3S_VERSION="$(awk -F= '/^k3s_version=/{print $2; exit}' "$GENERATED/inventory.ini")"
 
-progress 65 "Fetching hardened kubeconfig"
-"$ROOT/scripts/fetch-kubeconfig.sh"
+fetch_existing_kubeconfig() {
+  rm -f "$KUBECONFIG"
+  if "$ROOT/scripts/fetch-kubeconfig.sh" >/dev/null 2>&1 \
+    && [ -s "$KUBECONFIG" ] \
+    && kubectl cluster-info >/dev/null 2>&1; then
+    return 0
+  fi
+  rm -f "$KUBECONFIG"
+  return 1
+}
+
+existing_cluster_matches() {
+  local nodes
+  nodes="$(kubectl get nodes -o json 2>/dev/null || true)"
+  [ -n "$nodes" ] || return 1
+
+  jq -e \
+    --argjson expected "$EXPECTED_NODE_COUNT" \
+    --arg version "$DESIRED_K3S_VERSION" '
+      (.items | length) == $expected and
+      all(.items[]; .status.nodeInfo.kubeletVersion == $version)
+    ' >/dev/null <<<"$nodes"
+}
+
+node_ready() {
+  local node="$1"
+  kubectl get node "$node" -o json 2>/dev/null \
+    | jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' >/dev/null
+}
+
+all_nodes_ready() {
+  local nodes node
+  mapfile -t nodes < <(kubectl get nodes -o json | jq -r '.items[].metadata.name')
+  [ "${#nodes[@]}" -eq "$EXPECTED_NODE_COUNT" ] || return 1
+  for node in "${nodes[@]}"; do
+    node_ready "$node" || return 1
+  done
+}
+
+cilium_on_node_healthy() {
+  local node="$1"
+  kubectl -n kube-system get pods -l k8s-app=cilium \
+    --field-selector "spec.nodeName=$node" -o json 2>/dev/null \
+    | jq -e '
+        (.items | length) == 1 and
+        .items[0].status.phase == "Running" and
+        ((.items[0].status.containerStatuses // []) | length) > 0 and
+        all((.items[0].status.containerStatuses // [])[]; .ready == true)
+      ' >/dev/null
+}
+
+repair_not_ready_nodes() {
+  local nodes node pod attempt recovered
+  mapfile -t nodes < <(
+    kubectl get nodes -o json \
+      | jq -r '.items[] | select(any(.status.conditions[]?; .type == "Ready" and .status != "True")) | .metadata.name'
+  )
+
+  [ "${#nodes[@]}" -gt 0 ] || return 0
+
+  echo "Detected non-ready nodes after K3s reconciliation: ${nodes[*]}"
+  kubectl get nodes -o wide >&2 || true
+
+  if ! kubectl -n kube-system get daemonset/cilium >/dev/null 2>&1; then
+    echo "Cilium is not installed yet; node readiness will be established during platform installation."
+    return 0
+  fi
+
+  for node in "${nodes[@]}"; do
+    echo "Repairing CNI state on $node by recycling only its Cilium pod."
+    pod="$(kubectl -n kube-system get pods -l k8s-app=cilium \
+      --field-selector "spec.nodeName=$node" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+
+    if [ -z "$pod" ]; then
+      echo "No Cilium pod found on $node." >&2
+      continue
+    fi
+
+    kubectl -n kube-system delete pod "$pod" --wait=false
+    recovered=false
+    for attempt in $(seq 1 60); do
+      if cilium_on_node_healthy "$node" && node_ready "$node"; then
+        recovered=true
+        echo "$node recovered and is Ready."
+        break
+      fi
+      sleep 5
+    done
+
+    if [ "$recovered" != true ]; then
+      echo "$node did not recover after recycling Cilium." >&2
+      kubectl describe node "$node" >&2 || true
+      kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
+      kubectl get events -A --sort-by=.lastTimestamp | tail -n 80 >&2 || true
+      return 1
+    fi
+  done
+
+  all_nodes_ready
+}
+
+cluster_reused=false
+if fetch_existing_kubeconfig && existing_cluster_matches; then
+  cluster_reused=true
+  progress 55 "Reusing existing K3s cluster without restarting healthy nodes"
+  echo "Existing K3s $DESIRED_K3S_VERSION cluster detected with $EXPECTED_NODE_COUNT nodes."
+else
+  progress 55 "Installing and configuring K3s cluster"
+  "$ROOT/.deploy-venv/bin/ansible-playbook" \
+    -i "$GENERATED/inventory.ini" \
+    "$ROOT/infrastructure/ansible/playbooks/cluster.yml"
+
+  progress 65 "Fetching hardened kubeconfig"
+  "$ROOT/scripts/fetch-kubeconfig.sh"
+fi
+
+if [ "$cluster_reused" = true ]; then
+  progress 65 "Using hardened kubeconfig from existing cluster"
+fi
+
 if [ ! -s "$KUBECONFIG" ]; then
   echo "Kubeconfig was not generated at $KUBECONFIG" >&2
   exit 1
 fi
 kubectl cluster-info >/dev/null
+
+# Older deployments restarted K3s agents on every run. With Cilium this can
+# leave a worker's CNI registration stale while the Cilium container itself is
+# still healthy. Reuse a matching cluster and repair only affected nodes once.
+repair_not_ready_nodes
 
 progress 75 "Installing platform services"
 "$ROOT/scripts/install-platform.sh"
