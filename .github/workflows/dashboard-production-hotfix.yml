@@ -1,0 +1,130 @@
+name: Dashboard Production Hotfix
+
+on:
+  push:
+    branches: [ops/deploy-dashboard-cc6e389]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: autonomous-sre-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-dashboard:
+    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    environment: production
+    timeout-minutes: 30
+    env:
+      TARGET_SHA: cc6e3895016d2e301af90b0ca7af81f8fa9af98c
+      SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+      SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+      SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+      SCW_REGION: ${{ vars.SCW_REGION }}
+      SCW_ZONE: ${{ vars.SCW_ZONE }}
+      OPERATOR_CIDR: ${{ vars.OPERATOR_CIDR }}
+      ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+      CONTROL_PLANE_TYPE: ${{ vars.CONTROL_PLANE_TYPE }}
+      WORKER_TYPE: ${{ vars.WORKER_TYPE }}
+      WORKER_COUNT: ${{ vars.WORKER_COUNT }}
+      AUTO_REMEDIATION_MODE: ${{ vars.AUTO_REMEDIATION_MODE }}
+      OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL }}
+      SMTP_SMARTHOST: ${{ vars.SMTP_SMARTHOST }}
+      SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+      LETSENCRYPT_EMAIL: ${{ vars.LETSENCRYPT_EMAIL }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      APPROVAL_SIGNING_KEY: ${{ secrets.APPROVAL_SIGNING_KEY }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Validate dashboard source
+        working-directory: apps/dashboard
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - uses: opentofu/setup-opentofu@v2.0.2
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+
+      - name: Build and push dashboard image
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          command -v docker >/dev/null || { echo '::error::docker is not installed on the production runner'; exit 1; }
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/dashboard:${TARGET_SHA}"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build --pull -f apps/dashboard/Dockerfile -t "$image" .
+          docker push "$image"
+          echo "DASHBOARD_IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Prepare production cluster access
+        shell: bash
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          set -Eeuo pipefail
+          install -m 0700 -d "${{ runner.temp }}/ssh"
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "${{ runner.temp }}/ssh/deploy_key"
+          chmod 0600 "${{ runner.temp }}/ssh/deploy_key"
+          echo "SSH_PRIVATE_KEY=${{ runner.temp }}/ssh/deploy_key" >> "$GITHUB_ENV"
+          export SSH_PRIVATE_KEY="${{ runner.temp }}/ssh/deploy_key"
+          mkdir -p config
+          cat > config/project.env <<EOF
+          SCW_PROJECT_ID=$SCW_PROJECT_ID
+          SCW_REGION=$SCW_REGION
+          SCW_ZONE=$SCW_ZONE
+          OPERATOR_CIDR=$OPERATOR_CIDR
+          ALERT_EMAIL=$ALERT_EMAIL
+          GITHUB_REPOSITORY=$GITHUB_REPOSITORY
+          CONTROL_PLANE_TYPE=$CONTROL_PLANE_TYPE
+          WORKER_TYPE=$WORKER_TYPE
+          WORKER_COUNT=$WORKER_COUNT
+          RUNNER_TYPE=DEV1-S
+          AUTO_REMEDIATION_MODE=$AUTO_REMEDIATION_MODE
+          OLLAMA_MODEL=$OLLAMA_MODEL
+          SMTP_SMARTHOST=$SMTP_SMARTHOST
+          SMTP_USERNAME=$SMTP_USERNAME
+          LETSENCRYPT_EMAIL=$LETSENCRYPT_EMAIL
+          EOF
+          cat > config/secrets.env <<EOF
+          SMTP_PASSWORD=$SMTP_PASSWORD
+          APPROVAL_SIGNING_KEY=$APPROVAL_SIGNING_KEY
+          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+          GHCR_PULL_TOKEN=$GHCR_PULL_TOKEN
+          EOF
+          chmod 0600 config/secrets.env
+          ./scripts/install-deploy-tools.sh >/dev/null
+          export PATH="$PWD/.deploy-venv/bin:$PATH"
+          ./scripts/fetch-kubeconfig.sh >/dev/null
+          echo "KUBECONFIG=$PWD/.generated/kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Roll out dashboard only
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          kubectl -n sre-system set image deployment/autonomous-sre-dashboard "dashboard=$DASHBOARD_IMAGE"
+          kubectl -n sre-system rollout status deployment/autonomous-sre-dashboard --timeout=4m
+          actual="$(kubectl -n sre-system get deployment/autonomous-sre-dashboard -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          test "$actual" = "$DASHBOARD_IMAGE"
+          ready="$(kubectl -n sre-system get deployment/autonomous-sre-dashboard -o jsonpath='{.status.readyReplicas}')"
+          test "${ready:-0}" = "2"
+          health="$(kubectl get --raw '/api/v1/namespaces/sre-system/services/http:autonomous-sre-dashboard:8080/proxy/healthz')"
+          test -n "$health"
+          echo "Dashboard image: $actual"
+          echo "Ready replicas: $ready"
+          echo "Service health: $health"
