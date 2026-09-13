@@ -71,7 +71,12 @@ def test_rollback_serializes_pod_template_with_kubernetes_json_field_names():
             template=client.V1PodTemplateSpec(
                 metadata=client.V1ObjectMeta(labels={"app": "demo-service"}),
                 spec=client.V1PodSpec(
-                    containers=[client.V1Container(name="demo-service", image="example/demo:latest")]
+                    containers=[
+                        client.V1Container(
+                            name="demo-service",
+                            image="example/demo:latest",
+                        )
+                    ]
                 ),
             ),
         ),
