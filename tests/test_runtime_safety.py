@@ -1,11 +1,12 @@
 from datetime import UTC, datetime, timedelta
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
-from apps.controller import main as controller_module
 from autonomous_sre import engine as engine_module
 from autonomous_sre import result_handler as result_handler_module
 from autonomous_sre.events import EVENT_STREAM, publish, subscribe_json
@@ -19,6 +20,12 @@ from autonomous_sre.models import (
     RemediationPlan,
     Risk,
 )
+
+CONTROLLER_PATH = Path(__file__).parents[1] / "apps" / "controller" / "main.py"
+CONTROLLER_SPEC = spec_from_file_location("autonomous_sre_controller_main", CONTROLLER_PATH)
+assert CONTROLLER_SPEC is not None and CONTROLLER_SPEC.loader is not None
+controller_module = module_from_spec(CONTROLLER_SPEC)
+CONTROLLER_SPEC.loader.exec_module(controller_module)
 
 
 def remediation_tuple() -> tuple[Diagnosis, RemediationPlan, PolicyDecision]:
