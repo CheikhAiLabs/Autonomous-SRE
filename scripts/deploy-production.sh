@@ -82,17 +82,61 @@ recover_stale_worker() {
 }
 
 run_deploy() {
+  local log_file="$1" rc
+  mkdir -p "$GENERATED"
   set +e
-  "$ROOT/scripts/deploy-ci.sh"
-  local rc=$?
+  "$ROOT/scripts/deploy-ci.sh" 2>&1 | tee "$log_file"
+  rc=${PIPESTATUS[0]}
   set -e
   return "$rc"
 }
 
+recover_stale_tofu_lock() {
+  local log_file="$1" lock_id lock_who runner_host
+
+  if ! grep -q 'Error acquiring the state lock' "$log_file"; then
+    return 1
+  fi
+
+  lock_id="$(grep -Eo 'ID:[[:space:]]+[0-9a-fA-F-]+' "$log_file" | head -n1 | awk '{print $2}' || true)"
+  lock_who="$(grep -Eo 'Who:[[:space:]]+[^[:space:]]+' "$log_file" | head -n1 | awk '{print $2}' || true)"
+  runner_host="actions@$(hostname -s)"
+
+  if [ -z "$lock_id" ]; then
+    echo "OpenTofu reported a state lock but its lock ID could not be extracted." >&2
+    return 1
+  fi
+
+  if [ -z "$lock_who" ] || [ "$lock_who" != "$runner_host" ]; then
+    echo "Refusing to unlock state owned by ${lock_who:-unknown}; expected $runner_host." >&2
+    return 1
+  fi
+
+  if pgrep -af '[t]ofu.*apply' >/dev/null 2>&1; then
+    echo "An OpenTofu apply process is still running on this deployment runner; refusing to force-unlock." >&2
+    return 1
+  fi
+
+  echo "Detected stale OpenTofu lock $lock_id left by a cancelled deployment on this runner."
+  echo "No apply process is active. Releasing the stale lock before one bounded retry."
+  tofu -chdir="$ROOT/infrastructure/opentofu-platform" force-unlock -force "$lock_id"
+}
+
+DEPLOY_LOG="$GENERATED/deploy-ci.log"
 first_rc=0
-run_deploy || first_rc=$?
+run_deploy "$DEPLOY_LOG" || first_rc=$?
 if [ "$first_rc" -eq 0 ]; then
   exit 0
+fi
+
+if recover_stale_tofu_lock "$DEPLOY_LOG"; then
+  echo "Stale OpenTofu lock released. Retrying the production deployment once."
+  retry_rc=0
+  run_deploy "$GENERATED/deploy-ci-after-unlock.log" || retry_rc=$?
+  if [ "$retry_rc" -eq 0 ]; then
+    exit 0
+  fi
+  first_rc=$retry_rc
 fi
 
 echo "Initial deployment attempt failed. Checking whether the failure is caused by an unreachable worker."
