@@ -9,8 +9,8 @@ on:
 permissions:
   contents: read
 
-# Isolate CI execution by commit. A cancelled/zombie run for an older SHA must
-# never block validation of the current main revision.
+# Keep validation independent from GitHub-hosted runner availability. The
+# project already maintains a dedicated runner with private production access.
 concurrency:
   group: ci-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
@@ -18,7 +18,7 @@ concurrency:
 jobs:
   quality:
     name: Code and policy quality
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, autonomous-sre]
     steps:
       - uses: actions/checkout@v7
 
@@ -41,7 +41,13 @@ jobs:
         run: uv run pytest -q
 
       - name: Bash syntax and ShellCheck
+        shell: bash
         run: |
+          set -Eeuo pipefail
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y shellcheck
+          fi
           find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
           find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck --severity=warning
 
@@ -68,7 +74,7 @@ jobs:
 
   opentofu:
     name: OpenTofu validation
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, autonomous-sre]
     strategy:
       matrix:
         stack: [opentofu-runner, opentofu-platform]
@@ -77,6 +83,7 @@ jobs:
       - uses: opentofu/setup-opentofu@v2.0.2
         with:
           tofu_version: 1.12.6
+          tofu_wrapper: false
       - name: Format check
         run: tofu -chdir=infrastructure/${{ matrix.stack }} fmt -check -recursive
       - name: Init without backend
@@ -86,7 +93,7 @@ jobs:
 
   dashboard:
     name: Dashboard build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, autonomous-sre]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
