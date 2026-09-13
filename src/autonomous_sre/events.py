@@ -31,8 +31,7 @@ async def ensure_event_stream(nc: NATS) -> None:
             )
         except APIError:
             # Multiple services may race during startup. If another service created
-            # the stream first, the second lookup succeeds; otherwise the error
-            # from the lookup is allowed to surface and fail startup safely.
+            # the stream first, the second lookup succeeds; otherwise startup fails.
             await js.stream_info(EVENT_STREAM)
         return
 
@@ -102,6 +101,7 @@ async def subscribe_json(
         )
         await nc.jetstream().subscribe(
             subject,
+            queue=durable,
             durable=durable,
             stream=EVENT_STREAM,
             cb=wrapped,
