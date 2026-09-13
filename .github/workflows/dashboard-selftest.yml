@@ -23,37 +23,12 @@ jobs:
           path = Path('apps/dashboard/src/main.tsx')
           text = path.read_text()
           text = text.replace(
-              """    const event = incident
-              ? events.find(item => item.incident_id === incident.id && item.agent_name === definition.name)
-              : undefined
-          """,
-              """    const event = incident
-              ? events
-                  .filter(item => item.incident_id === incident.id && item.agent_name === definition.name)
-                  .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
-              : undefined
-          """,
+              "events.find(item => item.incident_id === incident.id && item.agent_name === definition.name)",
+              "events.filter(item => item.incident_id === incident.id && item.agent_name === definition.name).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]",
           )
           text = text.replace(
-              """    const liveState = agents.find(item => item.name === definition.name)
-              const eventState = event ? visualFromStatus(event.status) : undefined
-              const associatedLiveState = liveState?.incident_id === incident?.id ? visualFromStatus(liveState.status) : undefined
-          """,
-              """    const liveState = agents.find(item => item.name === definition.name)
-              const liveStateMatchesIncident = Boolean(liveState && liveState.incident_id === incident?.id)
-              const eventState = event ? visualFromStatus(event.status) : undefined
-              const associatedLiveState = liveStateMatchesIncident && liveState
-                ? visualFromStatus(liveState.status)
-                : undefined
-          """,
-          )
-          text = text.replace(
-              """    } else if (liveState?.incident_id === incident?.id) {
-              message = liveState.message
-          """,
-              """    } else if (liveStateMatchesIncident && liveState) {
-              message = liveState.message
-          """,
+              "} else if (liveState?.incident_id === incident?.id) {",
+              "} else if (liveStateMatchesIncident && liveState) {",
           )
           text = text.replace(
               "  const focusEvents = focusIncident ? activity.filter(item => item.incident_id === focusIncident.id) : []\n",
