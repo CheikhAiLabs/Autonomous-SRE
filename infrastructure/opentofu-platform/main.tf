@@ -68,12 +68,21 @@ resource "scaleway_instance_security_group" "cluster" {
     ip_range = "0.0.0.0/0"
   }
 
-  # The application HTTPS endpoint is private-to-operator by default.
+  # The application HTTPS endpoint is restricted to the operator and the
+  # self-hosted deployment runner. The runner needs HTTPS access so production
+  # verification can exercise the real Gateway route after every deployment.
   inbound_rule {
     action   = "accept"
     protocol = "TCP"
     port     = 443
     ip_range = var.operator_cidr
+  }
+
+  inbound_rule {
+    action   = "accept"
+    protocol = "TCP"
+    port     = 443
+    ip_range = var.runner_cidr
   }
 }
 
