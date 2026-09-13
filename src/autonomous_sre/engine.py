@@ -141,7 +141,10 @@ class IncidentEngine:
                 await record_agent_activity(
                     "case-manager",
                     "blocked",
-                    "Autonomous remediation was not dispatched because the controller heartbeat is stale",
+                    (
+                        "Autonomous remediation was not dispatched because "
+                        "the controller heartbeat is stale"
+                    ),
                     incident.id,
                     {"action": plan.action, "reason": "remediation-controller-unhealthy"},
                 )
