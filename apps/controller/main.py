@@ -2,7 +2,7 @@ import asyncio
 from uuid import UUID
 
 from autonomous_sre.config import get_settings
-from autonomous_sre.database import init_db, record_agent_activity, set_agent_status
+from autonomous_sre.database import init_db, record_agent_activity, touch_agent_status
 from autonomous_sre.events import connect_nats, publish, subscribe_json
 from autonomous_sre.kube_actions import KubernetesExecutor
 from autonomous_sre.models import RemediationPlan, RemediationResult
@@ -75,13 +75,13 @@ async def main() -> None:
     async def heartbeat() -> None:
         while True:
             try:
-                await set_agent_status(
+                await touch_agent_status(
                     "remediation-controller",
                     "watching",
                     "Ready and subscribed for remediation requests",
                     details={"heartbeat": "healthy"},
                 )
-                await set_agent_status(
+                await touch_agent_status(
                     "recovery-verifier",
                     "idle",
                     "Ready to verify remediations",
