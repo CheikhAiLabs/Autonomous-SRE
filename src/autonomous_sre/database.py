@@ -156,6 +156,44 @@ async def find_recent_by_fingerprint(fingerprint: str, cooldown_seconds: int) ->
         return row.to_model() if row else None
 
 
+async def set_agent_status(
+    agent_name: str,
+    status: str,
+    message: str,
+    incident_id: UUID | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Update live agent state without polluting the incident activity journal."""
+    now = datetime.now(UTC)
+    payload = details or {}
+    async with SessionLocal() as session:
+        current = await session.get(AgentStatusRow, agent_name)
+        if current is None:
+            current = AgentStatusRow(
+                name=agent_name,
+                status=status,
+                message=message,
+                incident_id=incident_id,
+                details=payload,
+                updated_at=now,
+            )
+            session.add(current)
+        else:
+            current.status = status
+            current.message = message
+            current.incident_id = incident_id
+            current.details = payload
+            current.updated_at = now
+        await session.commit()
+
+
+async def agent_status_is_fresh(agent_name: str, max_age_seconds: int = 60) -> bool:
+    cutoff = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
+    async with SessionLocal() as session:
+        row = await session.get(AgentStatusRow, agent_name)
+        return bool(row and row.updated_at >= cutoff)
+
+
 async def record_agent_activity(
     agent_name: str,
     status: str,
