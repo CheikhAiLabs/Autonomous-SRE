@@ -53,6 +53,8 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run build
+          grep -R -Fq 'AUTONOMOUS PIPELINE' dist
+          grep -R -Fq 'Live intervention flow' dist
 
       - uses: opentofu/setup-opentofu@v2.0.2
         with:
@@ -114,7 +116,8 @@ jobs:
           crane="$crane_dir/crane"
           "$crane" auth login -u "$GITHUB_ACTOR" -p "$GHCR_TOKEN" ghcr.io
 
-          base_image="$(kubectl -n sre-system get deployment/autonomous-sre-dashboard -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          current_image="$(kubectl -n sre-system get deployment/autonomous-sre-dashboard -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          base_image="ghcr.io/${GITHUB_REPOSITORY,,}/dashboard:a08f039585eb675b960e8e027fee586d35acbf31"
           target_image="ghcr.io/${GITHUB_REPOSITORY,,}/dashboard:${TARGET_SHA}"
 
           stage="$RUNNER_TEMP/dashboard-layer"
@@ -123,23 +126,37 @@ jobs:
           cp -a apps/dashboard/dist/. "$stage/usr/share/nginx/html/"
           tar -C "$stage" -cf "$RUNNER_TEMP/dashboard-layer.tar" usr
 
-          echo "Base image: $base_image"
+          echo "Current deployment image: $current_image"
+          echo "Known-good base image: $base_image"
           "$crane" append -b "$base_image" -f "$RUNNER_TEMP/dashboard-layer.tar" -t "$target_image"
           "$crane" digest "$target_image"
           echo "DASHBOARD_IMAGE=$target_image" >> "$GITHUB_ENV"
 
-      - name: Roll out dashboard only
+      - name: Roll out dashboard and verify served redesign
         shell: bash
         run: |
           set -Eeuo pipefail
           kubectl -n sre-system set image deployment/autonomous-sre-dashboard "dashboard=$DASHBOARD_IMAGE"
+          kubectl -n sre-system rollout restart deployment/autonomous-sre-dashboard
           kubectl -n sre-system rollout status deployment/autonomous-sre-dashboard --timeout=4m
+
           actual="$(kubectl -n sre-system get deployment/autonomous-sre-dashboard -o jsonpath='{.spec.template.spec.containers[0].image}')"
           test "$actual" = "$DASHBOARD_IMAGE"
           ready="$(kubectl -n sre-system get deployment/autonomous-sre-dashboard -o jsonpath='{.status.readyReplicas}')"
           test "${ready:-0}" = "2"
           health="$(kubectl get --raw '/api/v1/namespaces/sre-system/services/http:autonomous-sre-dashboard:8080/proxy/healthz')"
           test -n "$health"
+
+          root="$(kubectl get --raw '/api/v1/namespaces/sre-system/services/http:autonomous-sre-dashboard:8080/proxy/')"
+          js_path="$(printf '%s' "$root" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)"
+          test -n "$js_path"
+          js="$(kubectl get --raw "/api/v1/namespaces/sre-system/services/http:autonomous-sre-dashboard:8080/proxy${js_path}")"
+          printf '%s' "$js" | grep -Fq 'AUTONOMOUS PIPELINE'
+          printf '%s' "$js" | grep -Fq 'Live intervention flow'
+
           echo "Dashboard image: $actual"
           echo "Ready replicas: $ready"
           echo "Service health: $health"
+          echo "Served JS bundle: $js_path"
+          echo "Verified marker: AUTONOMOUS PIPELINE"
+          echo "Verified marker: Live intervention flow"
