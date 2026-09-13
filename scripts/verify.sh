@@ -78,13 +78,28 @@ kubectl get --raw '/api/v1/namespaces/sre-system/services/http:autonomous-sre-ap
 kubectl get --raw '/api/v1/namespaces/demo/services/http:demo-service:8080/proxy/healthz' | grep -q 'ok' && pass "Demo health endpoint" || fail "Demo health endpoint"
 
 AGENTS_JSON="$(kubectl get --raw '/api/v1/namespaces/sre-system/services/http:autonomous-sre-api:8000/proxy/api/v1/agents')"
-if printf '%s' "$AGENTS_JSON" | jq -e '
-  any(.[]; .name == "remediation-controller") and
-  any(.[]; .name == "recovery-verifier")
-' >/dev/null; then
+if printf '%s' "$AGENTS_JSON" | python3 -c '
+import json
+import sys
+from datetime import UTC, datetime, timedelta
+
+items = {item["name"]: item for item in json.load(sys.stdin)}
+cutoff = datetime.now(UTC) - timedelta(seconds=60)
+required = ("remediation-controller", "recovery-verifier")
+
+def fresh(name):
+    item = items.get(name)
+    if not item or not item.get("updated_at"):
+        return False
+    updated = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00"))
+    return updated >= cutoff and (item.get("details") or {}).get("heartbeat") == "healthy"
+
+raise SystemExit(0 if all(fresh(name) for name in required) else 1)
+'; then
   pass "Remediation control-plane heartbeat"
 else
-  echo "Remediation controller/verifier did not register in the shared incident database." >&2
+  echo "Remediation controller/verifier did not report a fresh heartbeat in the last 60 seconds." >&2
+  echo "$AGENTS_JSON" | jq -c '.[] | select(.name == "remediation-controller" or .name == "recovery-verifier")' >&2 || true
   diagnose_workload \
     "sre-system" \
     "deployment/remediation-controller" \
