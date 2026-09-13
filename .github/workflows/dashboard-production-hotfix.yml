@@ -48,7 +48,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/dashboard/package-lock.json
 
-      - name: Validate dashboard source
+      - name: Validate and build dashboard assets
         working-directory: apps/dashboard
         run: |
           npm ci --no-audit --no-fund
@@ -58,19 +58,6 @@ jobs:
         with:
           tofu_version: 1.12.6
           tofu_wrapper: false
-
-      - name: Build and push dashboard image
-        shell: bash
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -Eeuo pipefail
-          command -v docker >/dev/null || { echo '::error::docker is not installed on the production runner'; exit 1; }
-          image="ghcr.io/${GITHUB_REPOSITORY,,}/dashboard:${TARGET_SHA}"
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker build --pull -f apps/dashboard/Dockerfile -t "$image" .
-          docker push "$image"
-          echo "DASHBOARD_IMAGE=$image" >> "$GITHUB_ENV"
 
       - name: Prepare production cluster access
         shell: bash
@@ -112,6 +99,34 @@ jobs:
           export PATH="$PWD/.deploy-venv/bin:$PATH"
           ./scripts/fetch-kubeconfig.sh >/dev/null
           echo "KUBECONFIG=$PWD/.generated/kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Publish dashboard image layer with crane
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          crane_dir="$RUNNER_TEMP/crane"
+          mkdir -p "$crane_dir"
+          curl -fsSL --retry 4 --retry-all-errors \
+            https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz \
+            | tar -xz -C "$crane_dir" crane
+          crane="$crane_dir/crane"
+          "$crane" auth login -u "$GITHUB_ACTOR" -p "$GHCR_TOKEN" ghcr.io
+
+          base_image="$(kubectl -n sre-system get deployment/autonomous-sre-dashboard -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          target_image="ghcr.io/${GITHUB_REPOSITORY,,}/dashboard:${TARGET_SHA}"
+
+          stage="$RUNNER_TEMP/dashboard-layer"
+          rm -rf "$stage"
+          mkdir -p "$stage/usr/share/nginx/html"
+          cp -a apps/dashboard/dist/. "$stage/usr/share/nginx/html/"
+          tar -C "$stage" -cf "$RUNNER_TEMP/dashboard-layer.tar" usr
+
+          echo "Base image: $base_image"
+          "$crane" append -b "$base_image" -f "$RUNNER_TEMP/dashboard-layer.tar" -t "$target_image"
+          "$crane" digest "$target_image"
+          echo "DASHBOARD_IMAGE=$target_image" >> "$GITHUB_ENV"
 
       - name: Roll out dashboard only
         shell: bash
