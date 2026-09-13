@@ -147,9 +147,26 @@ fi
 
 FQDN="$(cat "$ROOT/.generated/platform-fqdn" 2>/dev/null || true)"
 if [ -z "$FQDN" ]; then
-  echo "Platform FQDN is unavailable." >&2
+  FQDN="$(
+    kubectl -n sre-system get certificate/autonomous-sre -o json 2>/dev/null \
+      | jq -r '.spec.dnsNames[0] // empty' \
+      || true
+  )"
+fi
+if [ -z "$FQDN" ]; then
+  FQDN="$(
+    kubectl -n sre-system get httproute -o json 2>/dev/null \
+      | jq -r '[.items[].spec.hostnames[]?][0] // empty' \
+      || true
+  )"
+fi
+if [ -z "$FQDN" ]; then
+  echo "Platform FQDN is unavailable from the local cache, certificate and HTTPRoutes." >&2
   fail "Public application routes"
 fi
+
+mkdir -p "$ROOT/.generated"
+printf '%s\n' "$FQDN" > "$ROOT/.generated/platform-fqdn"
 
 if curl -fsSL --retry 12 --retry-all-errors --retry-delay 5 --max-time 15 "https://$FQDN/" >/dev/null; then
   pass "Public dashboard route"
