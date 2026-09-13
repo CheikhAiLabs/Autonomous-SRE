@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GENERATED="$ROOT/.generated"
+# shellcheck source=scripts/lib.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
+load_config
+load_scw_credentials
 export KUBECONFIG="${KUBECONFIG:-$GENERATED/kubeconfig}"
 
 node_ready() {
