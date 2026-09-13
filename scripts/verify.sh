@@ -29,7 +29,10 @@ diagnose_workload() {
 
 cilium_live_healthy() {
   local nodes node
-  mapfile -t nodes < <(kubectl get nodes -l kubernetes.io/os=linux -o json | jq -r '.items[].metadata.name')
+  nodes=()
+  while IFS= read -r node; do
+    [ -n "$node" ] && nodes+=("$node")
+  done < <(kubectl get nodes -l kubernetes.io/os=linux -o json | jq -r '.items[].metadata.name')
   [ "${#nodes[@]}" -gt 0 ] || return 1
 
   for node in "${nodes[@]}"; do
