@@ -44,9 +44,38 @@ class IncidentEngine:
 
     async def process_alert(self, alert: dict[str, object]) -> None:
         fp = self.fingerprint(alert)
-        if await find_active_by_fingerprint(fp):
-            return
-        if await find_recent_by_fingerprint(fp, self.settings.incident_cooldown_seconds):
+        stale_recovered = False
+        active = await find_active_by_fingerprint(fp)
+        if active:
+            stale_after = max(180, self.settings.recovery_verify_seconds + 90)
+            age_seconds = (datetime.now(UTC) - active.updated_at).total_seconds()
+            if active.status == IncidentStatus.REMEDIATING and age_seconds > stale_after:
+                active.status = IncidentStatus.FAILED
+                active.updated_at = datetime.now(UTC)
+                active.remediation_result = {
+                    "success": False,
+                    "message": "Remediation timed out without a controller result",
+                    "details": {
+                        "reason": "stale-remediation-timeout",
+                        "age_seconds": int(age_seconds),
+                    },
+                }
+                await save_incident(active)
+                await record_agent_activity(
+                    "case-manager",
+                    "error",
+                    "Stale remediation closed after no controller result was received",
+                    active.id,
+                    {"age_seconds": int(age_seconds)},
+                )
+                await send_incident_email(active, "STALE REMEDIATION CLOSED")
+                stale_recovered = True
+            else:
+                return
+
+        if not stale_recovered and await find_recent_by_fingerprint(
+            fp, self.settings.incident_cooldown_seconds
+        ):
             return
 
         labels = {
