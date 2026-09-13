@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     opa_url: str = "http://opa.sre-system.svc:8181"
     ollama_url: str = "http://ollama.sre-system.svc:11434"
     ollama_model: str = "qwen3:4b"
+    ollama_timeout_seconds: float = 30.0
     alert_email: str = "cheikhminator@gmail.com"
     smtp_smarthost: str = "smtp.gmail.com:587"
     smtp_username: str = ""
