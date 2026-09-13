@@ -12,8 +12,8 @@ permissions:
   packages: read
 
 # Production deployment is singleton. A newer validated revision supersedes an
-# older run so a wedged SSH/systemd operation cannot block production for the
-# full workflow timeout. deploy-ci is idempotent and re-verifies the platform.
+# older run, and the production wrapper performs one bounded worker recovery
+# and retry when Kubernetes reports a stale worker node.
 concurrency:
   group: autonomous-sre-production
   cancel-in-progress: true
@@ -109,7 +109,8 @@ jobs:
           chmod 0600 config/secrets.env
 
       - name: Deploy and verify
-        run: make deploy-ci
+        shell: bash
+        run: bash ./scripts/deploy-production.sh
 
       - name: Publish deployment summary
         if: always()
