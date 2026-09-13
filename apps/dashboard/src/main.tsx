@@ -77,6 +77,7 @@ type IncidentReport = {
 }
 
 const API = '/api/v1'
+const HEADLAMP_URL = 'http://127.0.0.1:4466/kubernetes/'
 
 const agentDefinitions = [
   {name: 'detector', label: 'Detector', icon: Radar, idle: 'Watching Prometheus'},
@@ -216,7 +217,7 @@ function App() {
 
       <nav>
         <a className="nav-item active" href="/"><Activity size={17}/>Command Center</a>
-        <a className="nav-item" href="/kubernetes/"><Boxes size={17}/>Kubernetes</a>
+        <a className="nav-item" href={HEADLAMP_URL} target="_blank" rel="noreferrer" title="Run make headlamp locally first"><Boxes size={17}/>Kubernetes</a>
       </nav>
 
       <div className="sidebar-status">
@@ -236,7 +237,7 @@ function App() {
         <div className="topbar-actions">
           <span className="live-pill"><i/>Live · 2s</span>
           <button className="icon-button" onClick={refresh} title="Refresh now"><RefreshCw size={17}/></button>
-          <a className="primary-link" href="/kubernetes/"><Boxes size={16}/>Explore cluster<ExternalLink size={14}/></a>
+          <a className="primary-link" href={HEADLAMP_URL} target="_blank" rel="noreferrer" title="Run make headlamp locally first"><Boxes size={16}/>Explore cluster<ExternalLink size={14}/></a>
         </div>
       </header>
 
@@ -313,7 +314,7 @@ function App() {
             <PostureRow icon={<ShieldAlert/>} title="Approval required" detail="High-impact actions such as cordoning a node." tone="warn"/>
             <PostureRow icon={<ShieldCheck/>} title="Blocked" detail="Namespace deletion, infrastructure destruction and node draining." tone="danger"/>
           </div>
-          <a className="secondary-link" href="/kubernetes/"><Boxes size={15}/>Inspect live Kubernetes resources<ArrowRight size={14}/></a>
+          <a className="secondary-link" href={HEADLAMP_URL} target="_blank" rel="noreferrer" title="Run make headlamp locally first"><Boxes size={15}/>Inspect live Kubernetes resources<ArrowRight size={14}/></a>
         </section>
       </div>
 
