@@ -118,5 +118,5 @@ fi
 FQDN="$(cat "$ROOT/.generated/platform-fqdn" 2>/dev/null || true)"
 if [ -n "$FQDN" ]; then
   echo "Dashboard: https://$FQDN"
-  echo "Kubernetes Explorer: https://$FQDN/kubernetes/"
 fi
+echo "Kubernetes Explorer: run 'make headlamp' for secure local access"
