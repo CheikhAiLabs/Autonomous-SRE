@@ -75,12 +75,16 @@ else
     --timeout 10m
 fi
 
-if ! kubectl -n kube-system rollout status daemonset/cilium --timeout=8m; then
-  kubectl -n kube-system get daemonset/cilium -o wide >&2 || true
-  kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
-  kubectl -n kube-system get events --sort-by=.lastTimestamp | tail -n 50 >&2 || true
-  exit 1
+if ! kubectl -n kube-system rollout status daemonset/cilium --timeout=90s; then
+  echo "DaemonSet status is stale; checking live Cilium pods."
+  if ! kubectl -n kube-system wait pod -l k8s-app=cilium --for=condition=Ready --timeout=2m; then
+    kubectl -n kube-system get daemonset/cilium -o wide >&2 || true
+    kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
+    kubectl -n kube-system get events --sort-by=.lastTimestamp | tail -n 50 >&2 || true
+    exit 1
+  fi
 fi
+
 kubectl -n kube-system rollout status deployment/cilium-operator --timeout=5m
 kubectl wait --for=condition=Ready nodes --all --timeout=5m
 
