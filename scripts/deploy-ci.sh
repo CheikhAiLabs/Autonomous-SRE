@@ -52,8 +52,7 @@ for attempt in $(seq 1 30); do
   if "$ROOT/.deploy-venv/bin/ansible" all \
     -i "$GENERATED/inventory.ini" \
     -m ansible.builtin.ping \
-    -T 5 \
-    -o >/dev/null 2>&1; then
+    -T 5 >/dev/null 2>&1; then
     ssh_ready=true
     [ -t 1 ] && printf '\n' || true
     break
@@ -67,8 +66,7 @@ if [ "$ssh_ready" != true ]; then
   "$ROOT/.deploy-venv/bin/ansible" all \
     -i "$GENERATED/inventory.ini" \
     -m ansible.builtin.ping \
-    -T 5 \
-    -o || true
+    -T 5 || true
   exit 1
 fi
 
@@ -139,11 +137,11 @@ ansible_host_for_node() {
 dump_worker_agent_diagnostics() {
   local ansible_host="$1" node="$2"
   echo "K3s agent diagnostics for $node ($ansible_host):" >&2
-  "$ROOT/.deploy-venv/bin/ansible" "$ansible_host" \
+  timeout 30s "$ROOT/.deploy-venv/bin/ansible" "$ansible_host" \
     -i "$GENERATED/inventory.ini" \
+    -T 10 \
     -m ansible.builtin.shell \
-    -a 'set -o pipefail; systemctl status k3s-agent --no-pager -l || true; echo "--- journal ---"; journalctl -u k3s-agent -n 200 --no-pager || true; echo "--- resources ---"; df -h; free -m; echo "--- routes ---"; ip route' \
-    -o >&2 || true
+    -a 'set -o pipefail; systemctl status k3s-agent --no-pager -l || true; echo "--- journal ---"; journalctl -u k3s-agent -n 200 --no-pager || true; echo "--- resources ---"; df -h; free -m; echo "--- routes ---"; ip route' >&2 || true
   kubectl describe node "$node" >&2 || true
   kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
   kubectl get events -A --sort-by=.lastTimestamp | tail -n 80 >&2 || true
@@ -157,23 +155,26 @@ restart_worker_agent() {
     return 1
   fi
 
-  echo "Node $node stopped reporting. Restarting k3s-agent on $ansible_host."
-  if ! "$ROOT/.deploy-venv/bin/ansible" "$ansible_host" \
+  echo "Node $node stopped reporting. Scheduling a bounded k3s-agent restart on $ansible_host."
+  if ! timeout 25s "$ROOT/.deploy-venv/bin/ansible" "$ansible_host" \
     -i "$GENERATED/inventory.ini" \
+    -T 10 \
     -m ansible.builtin.shell \
-    -a 'systemctl reset-failed k3s-agent || true; systemctl restart k3s-agent; systemctl is-active --quiet k3s-agent' \
-    -o; then
+    -a 'systemctl reset-failed k3s-agent || true; unit="autonomous-sre-k3s-restart-$(date +%s)"; systemd-run --unit="$unit" --on-active=1s --collect /bin/systemctl restart k3s-agent >/dev/null; echo "$unit scheduled"'; then
+    echo "Could not schedule the k3s-agent restart on $ansible_host within 25 seconds." >&2
     dump_worker_agent_diagnostics "$ansible_host" "$node"
     return 1
   fi
 
-  # Give the kubelet a first chance to renew its lease and process any pending
-  # DaemonSet deletion before forcing away an object left behind while offline.
-  for attempt in $(seq 1 18); do
+  # The restart itself runs as a transient systemd job on the worker. The CI
+  # process never waits inside systemctl, so a wedged agent cannot hang the
+  # deployment indefinitely.
+  for attempt in $(seq 1 24); do
     if node_ready "$node" && cilium_on_node_healthy "$node"; then
       echo "$node recovered after restarting k3s-agent."
       return 0
     fi
+    wait_progress "Waiting for $node to report Ready after k3s-agent restart" "$attempt" 24
     sleep 5
   done
 
@@ -191,9 +192,11 @@ restart_worker_agent() {
       echo "$node recovered with a healthy Cilium agent."
       return 0
     fi
+    wait_progress "Waiting for $node and Cilium to recover" "$attempt" 36
     sleep 5
   done
 
+  echo "$node did not recover within the bounded worker recovery window." >&2
   dump_worker_agent_diagnostics "$ansible_host" "$node"
   return 1
 }
@@ -211,6 +214,7 @@ recycle_cilium_on_node() {
       echo "$node recovered with a fresh Cilium pod."
       return 0
     fi
+    wait_progress "Waiting for Cilium recovery on $node" "$attempt" 36
     sleep 5
   done
   return 1
