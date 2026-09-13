@@ -81,11 +81,6 @@ spec:
   hostnames: ["${PLATFORM_FQDN}"]
   rules:
     - matches:
-        - path: {type: PathPrefix, value: /kubernetes}
-      backendRefs:
-        - name: headlamp
-          port: 80
-    - matches:
         - path: {type: PathPrefix, value: /api}
       backendRefs:
         - name: autonomous-sre-api
