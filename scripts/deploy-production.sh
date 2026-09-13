@@ -89,10 +89,11 @@ run_deploy() {
   return "$rc"
 }
 
-if run_deploy; then
+first_rc=0
+run_deploy || first_rc=$?
+if [ "$first_rc" -eq 0 ]; then
   exit 0
 fi
-first_rc=$?
 
 echo "Initial deployment attempt failed. Checking whether the failure is caused by an unreachable worker."
 
