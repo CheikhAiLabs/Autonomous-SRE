@@ -21,6 +21,19 @@ from autonomous_sre.tokens import verify_approval_token
 app = FastAPI(title="Autonomous-SRE API", version="0.4.0")
 nc = None
 
+TRANSIENT_ACTIVITY_STATUSES = {
+    "active",
+    "diagnosing",
+    "idle",
+    "planning",
+    "remediating",
+    "running",
+    "verifying",
+    "watching",
+    "working",
+}
+TERMINAL_INCIDENT_STATUSES = {"recovered", "rejected", "blocked", "failed"}
+
 
 class ApprovalRequest(BaseModel):
     token: str
@@ -67,7 +80,29 @@ async def agents() -> list[dict[str, object]]:
 
 @app.get("/api/v1/activity")
 async def activity() -> list[dict[str, object]]:
-    return await list_agent_activity()
+    events = await list_agent_activity()
+    incidents_by_id = {
+        str(item.id): item.status.value
+        for item in await list_incidents()
+    }
+
+    visible_events: list[dict[str, object]] = []
+    for event in events:
+        status = str(event.get("status") or "").lower()
+        incident_id = event.get("incident_id")
+        incident_status = incidents_by_id.get(str(incident_id)) if incident_id else None
+
+        # Agent readiness belongs to /agents. The activity feed is intervention-centric.
+        # Do not let idle/watch/reset records make a completed intervention look active
+        # or "standby" after the incident has already reached a terminal state.
+        if status in TRANSIENT_ACTIVITY_STATUSES and (
+            incident_id is None or incident_status in TERMINAL_INCIDENT_STATUSES
+        ):
+            continue
+
+        visible_events.append(event)
+
+    return visible_events
 
 
 @app.get("/api/v1/incidents")
