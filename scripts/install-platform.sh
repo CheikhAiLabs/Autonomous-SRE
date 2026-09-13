@@ -51,21 +51,36 @@ kubectl apply --server-side=true -f https://github.com/kubernetes-sigs/gateway-a
 
 helm repo add cilium https://helm.cilium.io >/dev/null 2>&1 || true
 helm repo update cilium >/dev/null
-helm upgrade --install cilium cilium/cilium \
-  --namespace kube-system \
-  --version 1.20.1 \
-  --set ipam.mode=kubernetes \
-  --set kubeProxyReplacement=true \
-  --set k8sServiceHost="$CP_PRIVATE" \
-  --set k8sServicePort=6443 \
-  --set gatewayAPI.enabled=true \
-  --set hubble.relay.enabled=true \
-  --set hubble.ui.enabled=true \
-  --set prometheus.enabled=true \
-  --set operator.prometheus.enabled=true \
-  --set operator.replicas=1
 
-kubectl -n kube-system rollout status daemonset/cilium --timeout=5m
+CILIUM_STATUS="$(helm status cilium --namespace kube-system -o json 2>/dev/null | jq -r '.info.status // empty' || true)"
+CILIUM_CHART="$(helm list --namespace kube-system -f '^cilium$' -o json 2>/dev/null | jq -r '.[0].chart // empty' || true)"
+
+if [ "$CILIUM_STATUS" = "deployed" ] && [ "$CILIUM_CHART" = "cilium-1.20.1" ]; then
+  echo "Cilium 1.20.1 is already deployed; skipping unnecessary dataplane rollout."
+else
+  helm upgrade --install cilium cilium/cilium \
+    --namespace kube-system \
+    --version 1.20.1 \
+    --set ipam.mode=kubernetes \
+    --set kubeProxyReplacement=true \
+    --set k8sServiceHost="$CP_PRIVATE" \
+    --set k8sServicePort=6443 \
+    --set gatewayAPI.enabled=true \
+    --set hubble.relay.enabled=true \
+    --set hubble.ui.enabled=true \
+    --set prometheus.enabled=true \
+    --set operator.prometheus.enabled=true \
+    --set operator.replicas=1 \
+    --wait \
+    --timeout 10m
+fi
+
+if ! kubectl -n kube-system rollout status daemonset/cilium --timeout=8m; then
+  kubectl -n kube-system get daemonset/cilium -o wide >&2 || true
+  kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
+  kubectl -n kube-system get events --sort-by=.lastTimestamp | tail -n 50 >&2 || true
+  exit 1
+fi
 kubectl -n kube-system rollout status deployment/cilium-operator --timeout=5m
 kubectl wait --for=condition=Ready nodes --all --timeout=5m
 
