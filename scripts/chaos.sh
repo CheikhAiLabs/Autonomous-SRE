@@ -26,11 +26,35 @@ latest_incident_snapshot() {
     || printf 'unavailable\n'
 }
 
+incident_id_from_snapshot() {
+  local snapshot="$1"
+  case "$snapshot" in
+    none|unavailable|"") printf 'none\n' ;;
+    *) printf '%s\n' "$snapshot" | awk -F/ '{print $3}' ;;
+  esac
+}
+
+incident_failure_reason() {
+  local incident_id="$1"
+  if [ -z "$incident_id" ] || [ "$incident_id" = "none" ] || [ "$incident_id" = "unknown" ]; then
+    printf 'unavailable\n'
+    return 0
+  fi
+
+  kubectl get --raw "/api/v1/namespaces/sre-system/services/http:autonomous-sre-api:8000/proxy/api/v1/incidents/${incident_id}" 2>/dev/null \
+    | jq -r '
+        .remediation_result.message
+        // ([.timeline[]? | select(.status == "error" or .status == "failed") | .message] | last)
+        // "unavailable"
+      ' \
+    || printf 'unavailable\n'
+}
+
 print_incident_report_status() {
   local alert_name="$1" snapshot incident_id report
   snapshot="$(latest_incident_snapshot "$alert_name")"
-  incident_id="$(printf '%s' "$snapshot" | awk -F/ '{print $3}')"
-  if [ -z "$incident_id" ] || [ "$incident_id" = "unknown" ] || [ "$snapshot" = "none" ] || [ "$snapshot" = "unavailable" ]; then
+  incident_id="$(incident_id_from_snapshot "$snapshot")"
+  if [ -z "$incident_id" ] || [ "$incident_id" = "unknown" ] || [ "$incident_id" = "none" ]; then
     return 0
   fi
 
@@ -44,15 +68,44 @@ print_incident_report_status() {
 }
 
 print_pipeline_diagnostics() {
-  local alert_name="$1"
+  local alert_name="$1" snapshot incident_id
+  snapshot="$(latest_incident_snapshot "$alert_name")"
+  incident_id="$(incident_id_from_snapshot "$snapshot")"
+
   echo >&2
   echo "Autonomous-SRE diagnostics:" >&2
   echo "  prometheus_alert=$(prometheus_alert_state "$alert_name")" >&2
-  echo "  latest_incident=$(latest_incident_snapshot "$alert_name")" >&2
+  echo "  latest_incident=$snapshot" >&2
+  if [ "$incident_id" != "none" ] && [ "$incident_id" != "unknown" ]; then
+    echo "  failure_reason=$(incident_failure_reason "$incident_id")" >&2
+  fi
+  echo "  demo deployment:" >&2
+  kubectl -n demo get deployment/demo-service -o wide >&2 || true
+  echo "  demo ReplicaSets:" >&2
+  kubectl -n demo get rs -l app=demo-service \
+    -o custom-columns='NAME:.metadata.name,REVISION:.metadata.annotations.deployment\.kubernetes\.io/revision,DESIRED:.spec.replicas,READY:.status.readyReplicas' >&2 || true
   echo "  worker tail:" >&2
   kubectl -n sre-system logs deployment/autonomous-sre-worker --tail=120 >&2 || true
   echo "  controller tail:" >&2
   kubectl -n sre-system logs deployment/remediation-controller --tail=120 >&2 || true
+}
+
+fail_on_new_failed_incident() {
+  local alert_name="$1" baseline_id="$2" snapshot status incident_id reason
+  snapshot="$(latest_incident_snapshot "$alert_name")"
+  status="$(printf '%s' "$snapshot" | awk -F/ '{print $1}')"
+  incident_id="$(incident_id_from_snapshot "$snapshot")"
+
+  if [ "$status" = "failed" ] \
+    && [ "$incident_id" != "none" ] \
+    && [ "$incident_id" != "unknown" ] \
+    && [ "$incident_id" != "$baseline_id" ]; then
+    reason="$(incident_failure_reason "$incident_id")"
+    echo "✗ Autonomous-SRE marked incident $incident_id as failed: $reason" >&2
+    print_pipeline_diagnostics "$alert_name"
+    return 1
+  fi
+  return 0
 }
 
 cleanup() {
@@ -90,6 +143,7 @@ case "$SCENARIO" in
     ;;
   replica-floor)
     ALERT_NAME="DemoServiceReplicaFloorBreached"
+    BASELINE_INCIDENT_ID="$(incident_id_from_snapshot "$(latest_incident_snapshot "$ALERT_NAME")")"
     echo "Introducing a sustained production replica-floor violation..."
     kubectl -n demo scale deployment/demo-service --replicas=1
     kubectl -n demo rollout status deployment/demo-service --timeout=2m
@@ -103,6 +157,9 @@ case "$SCENARIO" in
       if [ "$DESIRED" = "2" ] && [ "$READY" = "2" ]; then
         recovered=true
         break
+      fi
+      if ! fail_on_new_failed_incident "$ALERT_NAME" "$BASELINE_INCIDENT_ID"; then
+        exit 1
       fi
       if [ $((attempt % 3)) -eq 0 ]; then
         ELAPSED=$((attempt * 5))
@@ -122,6 +179,7 @@ case "$SCENARIO" in
     ;;
   bad-release)
     ALERT_NAME="DemoServiceHigh5xxRate"
+    BASELINE_INCIDENT_ID="$(incident_id_from_snapshot "$(latest_incident_snapshot "$ALERT_NAME")")"
     echo "Starting in-cluster traffic generator..."
     kubectl -n demo delete pod sre-loadgen --ignore-not-found >/dev/null
     kubectl -n demo run sre-loadgen \
@@ -143,6 +201,9 @@ case "$SCENARIO" in
       if [ "$VALUE" = "0" ]; then
         recovered=true
         break
+      fi
+      if ! fail_on_new_failed_incident "$ALERT_NAME" "$BASELINE_INCIDENT_ID"; then
+        exit 1
       fi
       if [ $((attempt % 3)) -eq 0 ]; then
         ELAPSED=$((attempt * 5))
