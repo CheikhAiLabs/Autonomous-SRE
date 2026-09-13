@@ -45,14 +45,19 @@ case "$SCENARIO" in
     kubectl -n demo scale deployment/demo-service --replicas=1
     kubectl -n demo rollout status deployment/demo-service --timeout=2m
     echo "Waiting for Autonomous-SRE to restore the required replica count..."
+    echo "The alert requires 30s of sustained violation before it can fire; the worker then polls every 15s."
     recovered=false
-    for _ in $(seq 1 90); do
+    for attempt in $(seq 1 90); do
       DESIRED="$(kubectl -n demo get deploy demo-service -o jsonpath='{.spec.replicas}')"
       READY="$(kubectl -n demo get deploy demo-service -o jsonpath='{.status.readyReplicas}')"
       READY="${READY:-0}"
       if [ "$DESIRED" = "2" ] && [ "$READY" = "2" ]; then
         recovered=true
         break
+      fi
+      if [ $((attempt % 3)) -eq 0 ]; then
+        ELAPSED=$((attempt * 5))
+        echo "  ${ELAPSED}s elapsed: desired=${DESIRED}, ready=${READY}"
       fi
       sleep 5
     done
@@ -61,6 +66,7 @@ case "$SCENARIO" in
       echo "✓ Autonomous replica-floor remediation observed"
     else
       echo "✗ Autonomous replica-floor remediation was not observed within timeout" >&2
+      echo "Check worker/controller logs and the incident timeline for the exact stopped stage." >&2
       exit 1
     fi
     ;;
@@ -80,11 +86,15 @@ case "$SCENARIO" in
 
     echo "Waiting for Autonomous-SRE to restore the previous revision..."
     recovered=false
-    for _ in $(seq 1 90); do
+    for attempt in $(seq 1 90); do
       VALUE="$(kubectl -n demo get deploy demo-service -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="ERROR_RATE")].value}')"
       if [ "$VALUE" = "0" ]; then
         recovered=true
         break
+      fi
+      if [ $((attempt % 3)) -eq 0 ]; then
+        ELAPSED=$((attempt * 5))
+        echo "  ${ELAPSED}s elapsed: ERROR_RATE=${VALUE:-unset}"
       fi
       sleep 5
     done
@@ -93,6 +103,7 @@ case "$SCENARIO" in
       echo "✓ Autonomous rollback observed"
     else
       echo "✗ Autonomous rollback was not observed within timeout" >&2
+      echo "Check worker/controller logs and the incident timeline for the exact stopped stage." >&2
       exit 1
     fi
     ;;
