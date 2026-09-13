@@ -9,6 +9,7 @@ from nats.aio.client import Client as NATS
 
 from autonomous_sre.config import get_settings
 from autonomous_sre.database import (
+    agent_status_is_fresh,
     find_active_by_fingerprint,
     find_recent_by_fingerprint,
     record_agent_activity,
@@ -104,6 +105,20 @@ class IncidentEngine:
         incident.updated_at = datetime.now(UTC)
 
         if decision.result == PolicyResult.ALLOW:
+            if not await agent_status_is_fresh("remediation-controller", max_age_seconds=45):
+                incident.status = IncidentStatus.BLOCKED
+                incident.updated_at = datetime.now(UTC)
+                await save_incident(incident)
+                await record_agent_activity(
+                    "case-manager",
+                    "blocked",
+                    "Autonomous remediation was not dispatched because the controller heartbeat is stale",
+                    incident.id,
+                    {"action": plan.action, "reason": "remediation-controller-unhealthy"},
+                )
+                await send_incident_email(incident, "REMEDIATION CONTROLLER UNAVAILABLE")
+                return
+
             incident.status = IncidentStatus.REMEDIATING
             await save_incident(incident)
             await record_agent_activity(
@@ -112,15 +127,34 @@ class IncidentEngine:
                 f"Autonomous remediation authorised: {plan.action}",
                 incident.id,
             )
-            await publish(
-                self.nc,
-                "remediation.requested",
-                {
-                    "incident_id": str(incident.id),
-                    "plan": plan.model_dump(mode="json"),
-                    "mode": self.settings.auto_remediation_mode,
-                },
-            )
+            try:
+                await publish(
+                    self.nc,
+                    "remediation.requested",
+                    {
+                        "incident_id": str(incident.id),
+                        "plan": plan.model_dump(mode="json"),
+                        "mode": self.settings.auto_remediation_mode,
+                    },
+                )
+                await record_agent_activity(
+                    "case-manager",
+                    "success",
+                    f"Remediation request dispatched to controller: {plan.action}",
+                    incident.id,
+                )
+            except Exception as exc:
+                incident.status = IncidentStatus.FAILED
+                incident.updated_at = datetime.now(UTC)
+                await save_incident(incident)
+                await record_agent_activity(
+                    "case-manager",
+                    "error",
+                    "Failed to dispatch remediation request",
+                    incident.id,
+                    {"error": str(exc), "action": plan.action},
+                )
+                await send_incident_email(incident, "REMEDIATION DISPATCH FAILED")
         elif decision.result == PolicyResult.REQUIRE_APPROVAL:
             incident.status = IncidentStatus.PENDING_APPROVAL
             await save_incident(incident)
