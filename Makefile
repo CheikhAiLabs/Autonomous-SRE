@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help init configure check fmt test plan deploy deploy-all deploy-ci verify status logs headlamp-token chaos-smoke chaos-replica-floor chaos-bad-release access destroy destroy-all
+.PHONY: help init configure check fmt test plan deploy deploy-all deploy-ci verify status logs headlamp headlamp-token chaos-smoke chaos-replica-floor chaos-bad-release access destroy destroy-all
 
 help:
 	@echo "Autonomous-SRE"
@@ -17,7 +17,8 @@ help:
 	@echo "  make verify               Run end-to-end verification"
 	@echo "  make status               Show cluster and SRE status"
 	@echo "  make logs                 Follow Autonomous-SRE logs"
-	@echo "  make headlamp-token       Create an 8-hour Kubernetes Explorer login token"
+	@echo "  make headlamp             Open Headlamp locally and copy a 24-hour token"
+	@echo "  make headlamp-token       Create a 24-hour Kubernetes Explorer login token"
 	@echo "  make chaos-smoke          Kubernetes self-heal sanity check; no SRE incident expected if recovery is fast"
 	@echo "  make chaos-replica-floor  Trigger a managed low-risk scale remediation"
 	@echo "  make chaos-bad-release    Trigger the autonomous rollback scenario"
@@ -66,8 +67,11 @@ status:
 logs:
 	@./scripts/logs.sh
 
+headlamp:
+	@bash ./scripts/headlamp-login.sh
+
 headlamp-token:
-	@kubectl --kubeconfig="$(CURDIR)/.generated/kubeconfig" -n sre-system create token headlamp --duration=8h
+	@kubectl --kubeconfig="$(CURDIR)/.generated/kubeconfig" -n sre-system create token headlamp --duration=24h
 
 chaos-smoke:
 	@./scripts/chaos.sh pod-kill
