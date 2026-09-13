@@ -28,7 +28,7 @@ echo "Opening Headlamp at $URL"
 echo "Paste the token if Headlamp asks you to authenticate."
 
 reachable=false
-for attempt in $(seq 1 20); do
+for _ in {1..20}; do
   if curl -fsSL --max-time 10 "$URL" >/dev/null 2>&1; then
     reachable=true
     break
