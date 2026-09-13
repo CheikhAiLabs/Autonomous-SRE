@@ -154,9 +154,18 @@ jobs:
           printf '%s' "$js" | grep -Fq 'AUTONOMOUS PIPELINE'
           printf '%s' "$js" | grep -Fq 'Live intervention flow'
 
+          fqdn="$(kubectl -n sre-system get httproute autonomous-sre-https -o jsonpath='{.spec.hostnames[0]}')"
+          test -n "$fqdn"
+          public_root="$(curl -fsSL --retry 6 --retry-all-errors --connect-timeout 10 "https://${fqdn}/")"
+          public_js_path="$(printf '%s' "$public_root" | grep -oE '/assets/index-[A-Za-z0-9_-]+\.js' | head -1)"
+          test -n "$public_js_path"
+          public_js="$(curl -fsSL --retry 6 --retry-all-errors --connect-timeout 10 "https://${fqdn}${public_js_path}")"
+          printf '%s' "$public_js" | grep -Fq 'AUTONOMOUS PIPELINE'
+          printf '%s' "$public_js" | grep -Fq 'Live intervention flow'
+
           echo "Dashboard image: $actual"
           echo "Ready replicas: $ready"
           echo "Service health: $health"
-          echo "Served JS bundle: $js_path"
-          echo "Verified marker: AUTONOMOUS PIPELINE"
-          echo "Verified marker: Live intervention flow"
+          echo "Internal served JS bundle: $js_path"
+          echo "Public served JS bundle: $public_js_path"
+          echo "Public route verified with redesigned dashboard markers"
