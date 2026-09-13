@@ -42,6 +42,40 @@ recover_helm_release() {
   esac
 }
 
+cilium_live_healthy() {
+  local expected pods
+  expected="$(kubectl get nodes -l kubernetes.io/os=linux -o json | jq '.items | length')"
+  pods="$(kubectl -n kube-system get pods -l k8s-app=cilium -o json)"
+
+  jq -e --argjson expected "$expected" '
+    (.items | length) == $expected and
+    $expected > 0 and
+    all(.items[];
+      .status.phase == "Running" and
+      ((.status.containerStatuses // []) | length) > 0 and
+      all((.status.containerStatuses // [])[]; .ready == true)
+    )
+  ' >/dev/null <<<"$pods"
+}
+
+wait_for_cilium_live_health() {
+  local attempt
+  for attempt in $(seq 1 12); do
+    if cilium_live_healthy; then
+      echo "Cilium live health is good on every Linux node."
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "Cilium live health check failed." >&2
+  kubectl -n kube-system get daemonset/cilium -o wide >&2 || true
+  kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
+  kubectl -n kube-system get pods -l k8s-app=cilium -o json \
+    | jq -r '.items[] | [.metadata.name, .spec.nodeName, .status.phase, ((.status.containerStatuses // []) | map(.name + ":ready=" + (.ready|tostring)) | join(","))] | @tsv' >&2 || true
+  return 1
+}
+
 "$ROOT/scripts/bootstrap-state.sh" >/dev/null
 tofu -chdir="$ROOT/infrastructure/opentofu-platform" init -input=false -backend-config="$GENERATED/platform-backend.hcl" >/dev/null
 CP_PRIVATE="$(tofu -chdir="$ROOT/infrastructure/opentofu-platform" output -raw control_plane_private_ip)"
@@ -56,7 +90,7 @@ CILIUM_STATUS="$(helm status cilium --namespace kube-system -o json 2>/dev/null 
 CILIUM_CHART="$(helm list --namespace kube-system -f '^cilium$' -o json 2>/dev/null | jq -r '.[0].chart // empty' || true)"
 
 if [ "$CILIUM_STATUS" = "deployed" ] && [ "$CILIUM_CHART" = "cilium-1.20.1" ]; then
-  echo "Cilium 1.20.1 is already deployed; skipping unnecessary dataplane rollout."
+  echo "Cilium 1.20.1 is already deployed; preserving the existing dataplane."
 else
   helm upgrade --install cilium cilium/cilium \
     --namespace kube-system \
@@ -75,16 +109,10 @@ else
     --timeout 10m
 fi
 
-if ! kubectl -n kube-system rollout status daemonset/cilium --timeout=90s; then
-  echo "DaemonSet status is stale; checking live Cilium pods."
-  if ! kubectl -n kube-system wait pod -l k8s-app=cilium --for=condition=Ready --timeout=2m; then
-    kubectl -n kube-system get daemonset/cilium -o wide >&2 || true
-    kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
-    kubectl -n kube-system get events --sort-by=.lastTimestamp | tail -n 50 >&2 || true
-    exit 1
-  fi
-fi
-
+# On this K3s cluster the DaemonSet/Pod Ready condition can remain stale even
+# while every Cilium container is actually Running and ready. Validate the live
+# container state instead of blocking application deployments on stale status.
+wait_for_cilium_live_health
 kubectl -n kube-system rollout status deployment/cilium-operator --timeout=5m
 kubectl wait --for=condition=Ready nodes --all --timeout=5m
 
