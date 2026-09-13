@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Activity, ArrowRight, Boxes, BrainCircuit, CheckCircle2, ChevronRight,
-  Clock3, Download, ExternalLink, FileText, Mail, Radar, RefreshCw,
+  CircleDot, Clock3, Download, ExternalLink, FileText, Mail, Radar, RefreshCw,
   SearchCheck, ShieldAlert, ShieldCheck, Sparkles, Wrench, X, Zap
 } from 'lucide-react'
 import './styles.css'
@@ -85,19 +85,31 @@ type IncidentReport = {
   timeline: AgentActivity[]
 }
 
+type VisualState = 'complete' | 'active' | 'queued' | 'approval' | 'error' | 'idle'
+
+type PipelineStage = {
+  name: string
+  label: string
+  icon: React.ComponentType<{size?: number}>
+  state: VisualState
+  message: string
+  time?: string
+}
+
 const API = '/api/v1'
 const HEADLAMP_URL = '/kubernetes/'
 
 const agentDefinitions = [
-  {name: 'detector', label: 'Detector', icon: Radar, idle: 'Watching Prometheus'},
-  {name: 'ai-reasoner', label: 'AI Reasoner', icon: BrainCircuit, idle: 'Waiting for evidence'},
-  {name: 'planner', label: 'Planner', icon: Activity, idle: 'Waiting for a diagnosis'},
-  {name: 'policy-guard', label: 'Policy Guard', icon: ShieldCheck, idle: 'Waiting for a plan'},
-  {name: 'remediation-controller', label: 'Remediator', icon: Wrench, idle: 'Waiting for work'},
-  {name: 'recovery-verifier', label: 'Verifier', icon: SearchCheck, idle: 'Waiting for remediation'},
+  {name: 'detector', label: 'Detect', icon: Radar, idle: 'Watching Prometheus'},
+  {name: 'ai-reasoner', label: 'Reason', icon: BrainCircuit, idle: 'Waiting for evidence'},
+  {name: 'planner', label: 'Plan', icon: Activity, idle: 'Waiting for a diagnosis'},
+  {name: 'policy-guard', label: 'Guard', icon: ShieldCheck, idle: 'Waiting for a plan'},
+  {name: 'remediation-controller', label: 'Remediate', icon: Wrench, idle: 'Waiting for work'},
+  {name: 'recovery-verifier', label: 'Verify', icon: SearchCheck, idle: 'Waiting for remediation'},
 ]
 
 const terminalStatuses = new Set(['recovered', 'rejected', 'blocked', 'failed'])
+const failureStatuses = new Set(['failed', 'error', 'blocked', 'deny', 'rejected'])
 
 function formatDuration(seconds: number) {
   if (seconds < 60) return `${seconds}s`
@@ -112,6 +124,18 @@ function titleCase(value: string) {
   return value.replaceAll('_', ' ').replace(/\b\w/g, char => char.toUpperCase())
 }
 
+function timeAgo(value?: string) {
+  if (!value) return 'No activity yet'
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000))
+  if (seconds < 10) return 'just now'
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
 function emailDeliveryLabel(status?: string) {
   switch (status) {
     case 'success': return 'Delivered'
@@ -120,6 +144,143 @@ function emailDeliveryLabel(status?: string) {
     case 'not_attempted': return 'Not attempted'
     default: return status ? titleCase(status) : '…'
   }
+}
+
+function visualFromStatus(status?: string): VisualState {
+  const normalized = (status || '').toLowerCase()
+  if (['success', 'recovered', 'watching', 'allow', 'completed'].includes(normalized)) return 'complete'
+  if (['working', 'active', 'running', 'diagnosing', 'planning', 'remediating', 'verifying'].includes(normalized)) return 'active'
+  if (['pending_approval', 'approval', 'awaiting_approval'].includes(normalized)) return 'approval'
+  if (failureStatuses.has(normalized)) return 'error'
+  if (normalized === 'idle') return 'idle'
+  return normalized ? 'active' : 'queued'
+}
+
+function visualLabel(state: VisualState) {
+  switch (state) {
+    case 'complete': return 'Complete'
+    case 'active': return 'Running'
+    case 'approval': return 'Approval'
+    case 'error': return 'Failed'
+    case 'queued': return 'Queued'
+    default: return 'Standby'
+  }
+}
+
+function incidentTone(status?: string) {
+  if (status === 'recovered') return 'success'
+  if (['failed', 'rejected', 'blocked'].includes(status || '')) return 'danger'
+  if (status === 'pending_approval') return 'warning'
+  return 'active'
+}
+
+function inferredStageState(incident: Incident | undefined, index: number): VisualState {
+  if (!incident) return 'idle'
+  if (incident.status === 'recovered') return 'complete'
+
+  if (incident.status === 'blocked') {
+    if (index < 3) return 'complete'
+    if (index === 3) return 'error'
+    return 'queued'
+  }
+
+  if (incident.status === 'rejected') {
+    if (index < 4) return 'complete'
+    if (index === 4) return 'error'
+    return 'queued'
+  }
+
+  if (incident.status === 'failed') {
+    if (incident.remediation_result) {
+      if (index < 5) return 'complete'
+      return 'error'
+    }
+    if (incident.policy) {
+      if (index < 4) return 'complete'
+      return index === 4 ? 'error' : 'queued'
+    }
+    if (incident.plan) {
+      if (index < 3) return 'complete'
+      return index === 3 ? 'error' : 'queued'
+    }
+    if (incident.diagnosis) {
+      if (index < 2) return 'complete'
+      return index === 2 ? 'error' : 'queued'
+    }
+    return index === 0 ? 'complete' : index === 1 ? 'error' : 'queued'
+  }
+
+  if (incident.status === 'remediating') {
+    if (index < 4) return 'complete'
+    return index === 4 ? 'active' : 'queued'
+  }
+
+  if (incident.status === 'pending_approval') {
+    if (index < 4) return 'complete'
+    return index === 4 ? 'approval' : 'queued'
+  }
+
+  if (incident.status === 'diagnosed') {
+    if (index < 2) return 'complete'
+    return index === 2 ? 'active' : 'queued'
+  }
+
+  if (incident.status === 'open') {
+    if (index === 0) return 'complete'
+    return index === 1 ? 'active' : 'queued'
+  }
+
+  return 'queued'
+}
+
+function buildPipelineStages(
+  incident: Incident | undefined,
+  events: AgentActivity[],
+  agents: AgentStatus[],
+): PipelineStage[] {
+  return agentDefinitions.map((definition, index) => {
+    const event = incident
+      ? events.filter(item => item.incident_id === incident.id && item.agent_name === definition.name).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
+      : undefined
+    const liveState = agents.find(item => item.name === definition.name)
+    const liveStateMatchesIncident = Boolean(liveState && liveState.incident_id === incident?.id)
+    const eventState = event ? visualFromStatus(event.status) : undefined
+    const associatedLiveState = liveStateMatchesIncident && liveState
+      ? visualFromStatus(liveState.status)
+      : undefined
+    const state = eventState && eventState !== 'idle'
+      ? eventState
+      : associatedLiveState && associatedLiveState !== 'idle'
+        ? associatedLiveState
+        : inferredStageState(incident, index)
+
+    let message = definition.idle
+    let time = liveState?.updated_at
+    if (event) {
+      message = event.message
+      time = event.created_at
+    } else if (liveStateMatchesIncident && liveState) {
+      message = liveState.message
+    } else if (incident?.status === 'recovered' && state === 'complete') {
+      message = 'Completed successfully'
+    } else if (state === 'queued') {
+      message = 'Waiting for previous stage'
+    } else if (state === 'approval') {
+      message = 'Human approval required'
+    }
+
+    return {...definition, state, message, time}
+  })
+}
+
+function pipelineProgress(stages: PipelineStage[]) {
+  if (stages.length === 0) return 0
+  const score = stages.reduce((total, stage) => {
+    if (stage.state === 'complete' || stage.state === 'error') return total + 1
+    if (stage.state === 'active' || stage.state === 'approval') return total + 0.55
+    return total
+  }, 0)
+  return Math.round((score / stages.length) * 100)
 }
 
 function App() {
@@ -132,8 +293,10 @@ function App() {
   const [detailTab, setDetailTab] = useState<'overview'|'timeline'|'report'>('overview')
   const [loading, setLoading] = useState(true)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
   async function refresh() {
+    setRefreshing(true)
     try {
       const [incidentsResponse, agentsResponse, activityResponse, systemResponse] = await Promise.all([
         fetch(`${API}/incidents`),
@@ -148,7 +311,17 @@ function App() {
       setLastRefresh(new Date())
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
+  }
+
+  async function refreshIncident(incidentId: string) {
+    const [incidentResponse, reportResponse] = await Promise.all([
+      fetch(`${API}/incidents/${incidentId}`),
+      fetch(`${API}/incidents/${incidentId}/report`),
+    ])
+    if (incidentResponse.ok) setSelected(await incidentResponse.json())
+    if (reportResponse.ok) setReport(await reportResponse.json())
   }
 
   async function openIncident(item: Incident) {
@@ -156,12 +329,7 @@ function App() {
     setReport(null)
     setDetailTab('overview')
     history.replaceState({}, '', `/incidents/${item.id}${location.hash}`)
-    const [incidentResponse, reportResponse] = await Promise.all([
-      fetch(`${API}/incidents/${item.id}`),
-      fetch(`${API}/incidents/${item.id}/report`),
-    ])
-    if (incidentResponse.ok) setSelected(await incidentResponse.json())
-    if (reportResponse.ok) setReport(await reportResponse.json())
+    await refreshIncident(item.id)
   }
 
   function closeIncident() {
@@ -185,6 +353,12 @@ function App() {
       .then(item => item && openIncident(item))
   }, [])
 
+  useEffect(() => {
+    if (!selected?.id) return
+    const timer = setInterval(() => refreshIncident(selected.id), 2000)
+    return () => clearInterval(timer)
+  }, [selected?.id])
+
   const stats = useMemo(() => ({
     active: incidents.filter(i => !terminalStatuses.has(i.status)).length,
     recovered: incidents.filter(i => i.status === 'recovered').length,
@@ -193,11 +367,24 @@ function App() {
   }), [incidents])
 
   const currentIncident = incidents.find(item => !terminalStatuses.has(item.status))
-  const recentActivity = activity.slice(0, 14)
+  const focusIncident = currentIncident || incidents[0]
+  const pipelineStages = useMemo(
+    () => buildPipelineStages(focusIncident, activity, agents),
+    [focusIncident, activity, agents],
+  )
+  const progress = focusIncident?.status === 'recovered' ? 100 : pipelineProgress(pipelineStages)
+  const recentActivity = activity.slice(0, 16)
   const reportEmail = report?.email_delivery
   const reportEmailDetail = reportEmail?.recipient
     ? `${reportEmail.message || 'Email delivery recorded'} · ${reportEmail.recipient}`
     : reportEmail?.message || (system?.mail_enabled ? 'Waiting for incident delivery status.' : 'SMTP is not configured.')
+  const selectedEvents = selected
+    ? (report?.timeline || activity.filter(item => item.incident_id === selected.id))
+    : []
+  const selectedStages = useMemo(
+    () => buildPipelineStages(selected || undefined, selectedEvents, agents),
+    [selected, selectedEvents, agents],
+  )
 
   async function decide(kind: 'approve'|'reject') {
     if (!selected) return
@@ -212,8 +399,7 @@ function App() {
       return
     }
     await refresh()
-    const updated = await fetch(`${API}/incidents/${selected.id}`)
-    if (updated.ok) setSelected(await updated.json())
+    await refreshIncident(selected.id)
   }
 
   function downloadReport() {
@@ -254,34 +440,47 @@ function App() {
       <header className="topbar">
         <div>
           <span className="eyebrow">SRE COMMAND CENTER</span>
-          <h1>Operations overview</h1>
-          <p>Detection, reasoning and remediation across your Kubernetes platform.</p>
+          <h1>Autonomous operations</h1>
+          <p>Live detection, reasoning, policy and remediation across your Kubernetes platform.</p>
         </div>
         <div className="topbar-actions">
           <span className="live-pill"><i/>Live · 2s</span>
-          <button className="icon-button" onClick={refresh} title="Refresh now"><RefreshCw size={17}/></button>
+          <button className={`icon-button ${refreshing ? 'refreshing' : ''}`} onClick={refresh} title="Refresh now"><RefreshCw size={17}/></button>
           <a className="primary-link" href={HEADLAMP_URL} target="_blank" rel="noreferrer" title="Open Kubernetes Explorer"><Boxes size={16}/>Explore cluster<ExternalLink size={14}/></a>
         </div>
       </header>
 
-      {currentIncident && <section className="active-banner">
-        <div className="active-icon"><Zap size={19}/></div>
-        <div className="active-copy">
-          <span>ACTIVE INTERVENTION</span>
-          <strong>{currentIncident.evidence.alert_name}</strong>
-          <p>{currentIncident.diagnosis?.probable_cause || 'Evidence collection and diagnosis in progress.'}</p>
+      {focusIncident && <section className={`intervention-hero tone-${incidentTone(focusIncident.status)}`}>
+        <div className="intervention-main">
+          <div className="intervention-kicker">
+            <span className="hero-live-dot"/>
+            {currentIncident ? 'INTERVENTION IN PROGRESS' : 'LATEST INTERVENTION'}
+          </div>
+          <div className="intervention-title-row">
+            <div>
+              <h2>{focusIncident.evidence.alert_name}</h2>
+              <p>{focusIncident.diagnosis?.probable_cause || focusIncident.evidence.annotations?.summary || 'Collecting evidence and building a diagnosis.'}</p>
+            </div>
+            <span className={`status-chip status-large ${focusIncident.status}`}>{titleCase(focusIncident.status)}</span>
+          </div>
+          <div className="intervention-meta-row">
+            <span><CircleDot size={13}/>{focusIncident.plan?.action ? titleCase(focusIncident.plan.action) : 'Action pending'}</span>
+            <span><ShieldCheck size={13}/>{focusIncident.plan?.risk ? `${titleCase(focusIncident.plan.risk)} risk` : 'Risk pending'}</span>
+            <span><Clock3 size={13}/>{timeAgo(focusIncident.updated_at)}</span>
+          </div>
         </div>
-        <div className="active-meta">
-          <span className={`status-chip ${currentIncident.status}`}>{titleCase(currentIncident.status)}</span>
-          <button onClick={() => openIncident(currentIncident)}>Open incident<ArrowRight size={15}/></button>
+        <div className="intervention-progress-card">
+          <div className="progress-number"><strong>{progress}%</strong><span>{focusIncident.status === 'recovered' ? 'Recovered' : 'Workflow'}</span></div>
+          <div className="progress-track"><i style={{width: `${progress}%`}}/></div>
+          <button onClick={() => openIncident(focusIncident)}>Open intervention<ArrowRight size={15}/></button>
         </div>
       </section>}
 
       <section className="metric-grid">
-        <Metric icon={<ShieldAlert/>} label="Active incidents" value={stats.active} sub="Requires attention now"/>
-        <Metric icon={<CheckCircle2/>} label="Recovered" value={stats.recovered} sub="Closed interventions"/>
-        <Metric icon={<Clock3/>} label="Approvals" value={stats.approvals} sub="High-impact only"/>
-        <Metric icon={<Zap/>} label="Autonomous fixes" value={stats.autonomous} sub="Low + medium risk"/>
+        <Metric tone={stats.active > 0 ? 'active' : 'neutral'} icon={<ShieldAlert/>} label="Active incidents" value={stats.active} sub={stats.active > 0 ? 'Autonomous workflow running' : 'No active intervention'}/>
+        <Metric tone="success" icon={<CheckCircle2/>} label="Recovered" value={stats.recovered} sub="Closed successfully"/>
+        <Metric tone={stats.approvals > 0 ? 'warning' : 'neutral'} icon={<Clock3/>} label="Approvals" value={stats.approvals} sub="High-impact only"/>
+        <Metric tone="info" icon={<Zap/>} label="Autonomous fixes" value={stats.autonomous} sub="Low + medium risk"/>
       </section>
 
       <section className="system-strip">
@@ -292,23 +491,21 @@ function App() {
         <SystemItem label="Report recipient" value={system?.mail_enabled ? (system.report_recipient || 'Configured') : 'SMTP credentials required'} state="neutral"/>
       </section>
 
-      <section className="panel agents-panel">
-        <PanelTitle kicker="CONTROL PLANE" title="Agent operations" detail="Live status of the autonomous workflow"/>
-        <div className="agent-grid">
-          {agentDefinitions.map(definition => {
-            const state = agents.find(item => item.name === definition.name)
-            const Icon = definition.icon
-            const status = state?.status || 'idle'
-            return <article className={`agent-card ${status}`} key={definition.name}>
-              <div className="agent-card-top">
-                <div className="agent-icon"><Icon size={18}/></div>
-                <span className={`agent-state ${status}`}>{titleCase(status)}</span>
-              </div>
-              <h3>{definition.label}</h3>
-              <p>{state?.message || definition.idle}</p>
-              <small>{state ? new Date(state.updated_at).toLocaleTimeString() : 'No activity yet'}</small>
-            </article>
-          })}
+      <section className="panel flow-panel">
+        <PanelTitle
+          kicker="AUTONOMOUS PIPELINE"
+          title={currentIncident ? 'Live intervention flow' : 'Last intervention flow'}
+          detail={focusIncident ? `${focusIncident.id.slice(0,8)} · ${titleCase(focusIncident.status)}` : 'Waiting for the first incident'}
+        />
+        <div className="pipeline-legend">
+          <span className="legend-complete"><i/>Complete</span>
+          <span className="legend-active"><i/>Running</span>
+          <span className="legend-approval"><i/>Approval</span>
+          <span className="legend-error"><i/>Failed</span>
+          <span className="legend-queued"><i/>Queued</span>
+        </div>
+        <div className="pipeline-grid">
+          {pipelineStages.map((stage, index) => <PipelineCard stage={stage} index={index} key={stage.name}/>)}
         </div>
       </section>
 
@@ -317,17 +514,23 @@ function App() {
           <PanelTitle kicker="LIVE JOURNAL" title="Agent activity" detail={lastRefresh ? `Updated ${lastRefresh.toLocaleTimeString()}` : ''}/>
           <div className="timeline">
             {recentActivity.length === 0 && <Empty label="No agent events yet."/>}
-            {recentActivity.map(item => <div className="timeline-item" key={item.id}>
-              <div className={`timeline-dot ${item.status}`}/>
-              <div className="timeline-body">
-                <div className="timeline-head"><strong>{titleCase(item.agent_name)}</strong><time>{new Date(item.created_at).toLocaleTimeString()}</time></div>
-                <p>{item.message}</p>
-                {item.incident_id && <button className="inline-link" onClick={() => {
-                  const incident = incidents.find(i => i.id === item.incident_id)
-                  if (incident) openIncident(incident)
-                }}>Incident {item.incident_id.slice(0,8)}<ChevronRight size={13}/></button>}
+            {recentActivity.map(item => {
+              const visual = visualFromStatus(item.status)
+              return <div className={`timeline-item timeline-${visual}`} key={item.id}>
+                <div className={`timeline-dot ${visual}`}/>
+                <div className="timeline-body">
+                  <div className="timeline-head">
+                    <div><strong>{titleCase(item.agent_name)}</strong><span className={`activity-state ${visual}`}>{visualLabel(visual)}</span></div>
+                    <time>{new Date(item.created_at).toLocaleTimeString()}</time>
+                  </div>
+                  <p>{item.message}</p>
+                  {item.incident_id && <button className="inline-link" onClick={() => {
+                    const incident = incidents.find(i => i.id === item.incident_id)
+                    if (incident) openIncident(incident)
+                  }}>Incident {item.incident_id.slice(0,8)}<ChevronRight size={13}/></button>}
+                </div>
               </div>
-            </div>)}
+            })}
           </div>
         </section>
 
@@ -343,16 +546,16 @@ function App() {
       </div>
 
       <section className="panel incidents-panel">
-        <PanelTitle kicker="HISTORY" title="Incidents" detail={`${incidents.length} recorded`}/>
+        <PanelTitle kicker="INTERVENTION HISTORY" title="Incidents" detail={`${incidents.length} recorded`}/>
         <div className="incident-table">
-          <div className="table-header"><span>Incident</span><span>Status</span><span>Action</span><span>Risk</span><span>Started</span><span/></div>
+          <div className="table-header"><span>Incident</span><span>Status</span><span>Action</span><span>Risk</span><span>Last update</span><span/></div>
           {incidents.length === 0 && <Empty label={loading ? 'Loading incidents…' : 'No incidents recorded yet.'}/>} 
-          {incidents.map(item => <button className="incident-row" key={item.id} onClick={() => openIncident(item)}>
-            <span className="incident-name"><i className={`health-dot ${item.status}`}/><span><strong>{item.evidence.alert_name}</strong><small>{item.id.slice(0,8)}</small></span></span>
+          {incidents.map(item => <button className={`incident-row row-${incidentTone(item.status)}`} key={item.id} onClick={() => openIncident(item)}>
+            <span className="incident-name"><i className={`health-dot ${item.status}`}/><span><strong>{item.evidence.alert_name}</strong><small>{item.id.slice(0,8)} · {new Date(item.created_at).toLocaleTimeString()}</small></span></span>
             <span><span className={`status-chip ${item.status}`}>{titleCase(item.status)}</span></span>
             <span className="mono">{item.plan?.action ? titleCase(item.plan.action) : 'Pending'}</span>
             <span><span className={`risk ${item.plan?.risk || 'unknown'}`}>{item.plan?.risk || 'unknown'}</span></span>
-            <span className="muted-cell">{new Date(item.created_at).toLocaleString()}</span>
+            <span className="muted-cell">{timeAgo(item.updated_at)}</span>
             <span className="row-arrow"><ChevronRight size={17}/></span>
           </button>)}
         </div>
@@ -367,7 +570,7 @@ function App() {
           <div>
             <span className="eyebrow">INCIDENT {selected.id.slice(0,8)}</span>
             <h2>{selected.evidence.alert_name}</h2>
-            <div className="drawer-meta"><span className={`status-chip ${selected.status}`}>{titleCase(selected.status)}</span><span>{new Date(selected.created_at).toLocaleString()}</span></div>
+            <div className="drawer-meta"><span className={`status-chip ${selected.status}`}>{titleCase(selected.status)}</span><span>Updated {timeAgo(selected.updated_at)}</span></div>
           </div>
           <button className="close-button" onClick={closeIncident}><X size={19}/></button>
         </div>
@@ -378,6 +581,18 @@ function App() {
 
         <div className="drawer-content">
           {detailTab === 'overview' && <>
+            <section className={`drawer-state-banner tone-${incidentTone(selected.status)}`}>
+              <div><span>CURRENT STATE</span><strong>{titleCase(selected.status)}</strong></div>
+              <p>{selected.remediation_result?.message || selected.policy?.reason || selected.diagnosis?.probable_cause || 'Autonomous workflow is processing this incident.'}</p>
+            </section>
+
+            <section className="drawer-flow-section">
+              <div className="drawer-section-title"><span>INTERVENTION FLOW</span><small>{pipelineProgress(selectedStages)}% complete</small></div>
+              <div className="drawer-pipeline">
+                {selectedStages.map(stage => <div className={`drawer-stage ${stage.state}`} key={stage.name}><span>{stage.label}</span><i/><small>{visualLabel(stage.state)}</small></div>)}
+              </div>
+            </section>
+
             <section className="summary-hero">
               <span>AI ROOT CAUSE</span>
               <h3>{selected.diagnosis?.probable_cause || 'Diagnosis in progress'}</h3>
@@ -406,17 +621,17 @@ function App() {
           {detailTab === 'timeline' && <section className="drawer-section">
             <h3>Intervention timeline</h3>
             <div className="report-timeline">
-              {(report?.timeline || activity.filter(item => item.incident_id === selected.id)).map(item => <div className="report-event" key={item.id}>
-                <i className={item.status}/><div><div><strong>{titleCase(item.agent_name)}</strong><time>{new Date(item.created_at).toLocaleTimeString()}</time></div><p>{item.message}</p></div>
+              {selectedEvents.map(item => <div className={`report-event event-${visualFromStatus(item.status)}`} key={item.id}>
+                <i className={visualFromStatus(item.status)}/><div><div><strong>{titleCase(item.agent_name)}</strong><time>{new Date(item.created_at).toLocaleTimeString()}</time></div><p>{item.message}</p></div>
               </div>)}
-              {(report?.timeline || activity.filter(item => item.incident_id === selected.id)).length === 0 && <Empty label="No timeline events recorded for this incident."/>}
+              {selectedEvents.length === 0 && <Empty label="No timeline events recorded for this incident."/>}
             </div>
           </section>}
 
           {detailTab === 'report' && <>
             <section className="report-hero">
               <div className="report-icon"><FileText size={22}/></div>
-              <div><span>POST-INCIDENT REPORT</span><h3>Intervention summary ready</h3><p>The report contains diagnosis, policy decision, remediation result and the complete agent timeline.</p></div>
+              <div><span>POST-INCIDENT REPORT</span><h3>{terminalStatuses.has(selected.status) ? 'Intervention summary ready' : 'Report building live'}</h3><p>The report contains diagnosis, policy decision, remediation result and the complete agent timeline.</p></div>
             </section>
             <div className="report-stats">
               <DetailCard label="Duration" value={report ? formatDuration(report.duration_seconds) : '…'}/>
@@ -434,8 +649,21 @@ function App() {
   </div>
 }
 
-function Metric({icon,label,value,sub}:{icon:React.ReactNode,label:string,value:number,sub:string}) {
-  return <article className="metric-card"><div className="metric-icon">{icon}</div><div><span>{label}</span><strong>{value}</strong><small>{sub}</small></div></article>
+function Metric({icon,label,value,sub,tone}:{icon:React.ReactNode,label:string,value:number,sub:string,tone:'active'|'success'|'warning'|'info'|'neutral'}) {
+  return <article className={`metric-card metric-${tone}`}><div className="metric-icon">{icon}</div><div><span>{label}</span><strong>{value}</strong><small>{sub}</small></div></article>
+}
+
+function PipelineCard({stage,index}:{stage:PipelineStage,index:number}) {
+  const Icon = stage.icon
+  return <article className={`pipeline-stage ${stage.state}`}>
+    <div className="stage-index">{String(index + 1).padStart(2, '0')}</div>
+    <div className="stage-icon"><Icon size={18}/></div>
+    <div className="stage-copy">
+      <div><h3>{stage.label}</h3><span className={`stage-state ${stage.state}`}><i/>{visualLabel(stage.state)}</span></div>
+      <p>{stage.message}</p>
+      <small>{stage.time ? timeAgo(stage.time) : 'Waiting'}</small>
+    </div>
+  </article>
 }
 
 function SystemItem({label,value,state}:{label:string,value:string,state:'good'|'warn'|'neutral'}) {
