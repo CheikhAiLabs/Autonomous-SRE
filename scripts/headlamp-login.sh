@@ -3,8 +3,14 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KUBECONFIG_PATH="${KUBECONFIG:-$ROOT/.generated/kubeconfig}"
-LOCAL_URL="http://127.0.0.1:4466/kubernetes/"
+FQDN="$(cat "$ROOT/.generated/platform-fqdn" 2>/dev/null || true)"
 
+if [ -z "$FQDN" ]; then
+  echo "Platform FQDN is unavailable. Run make deploy or fetch the generated deployment state first." >&2
+  exit 1
+fi
+
+URL="https://$FQDN/kubernetes/"
 TOKEN="$(kubectl --kubeconfig="$KUBECONFIG_PATH" -n sre-system create token headlamp --duration=24h)"
 
 if command -v pbcopy >/dev/null 2>&1; then
@@ -18,28 +24,28 @@ else
   printf '%s\n' "$TOKEN"
 fi
 
-echo "Opening Headlamp locally at $LOCAL_URL"
-echo "Keep this terminal open while using Headlamp."
+echo "Opening Headlamp at $URL"
+echo "Paste the token if Headlamp asks you to authenticate."
 
-kubectl --kubeconfig="$KUBECONFIG_PATH" -n sre-system port-forward service/headlamp 4466:80 >/tmp/autonomous-sre-headlamp-port-forward.log 2>&1 &
-PF_PID=$!
-trap 'kill "$PF_PID" 2>/dev/null || true' EXIT INT TERM
-
-for _ in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:4466/kubernetes/" >/dev/null 2>&1; then
+reachable=false
+for attempt in $(seq 1 20); do
+  if curl -fsSL --max-time 10 "$URL" >/dev/null 2>&1; then
+    reachable=true
     break
   fi
-  if ! kill -0 "$PF_PID" 2>/dev/null; then
-    cat /tmp/autonomous-sre-headlamp-port-forward.log >&2 || true
-    exit 1
-  fi
-  sleep 1
+  sleep 2
 done
 
-if command -v open >/dev/null 2>&1; then
-  open "$LOCAL_URL"
-elif command -v xdg-open >/dev/null 2>&1; then
-  xdg-open "$LOCAL_URL" >/dev/null 2>&1 || true
+if [ "$reachable" != true ]; then
+  echo "Headlamp is not reachable through the public Gateway at $URL" >&2
+  echo "Check the Gateway and HTTPRoute before retrying." >&2
+  exit 1
 fi
 
-wait "$PF_PID"
+if command -v open >/dev/null 2>&1; then
+  open "$URL"
+elif command -v xdg-open >/dev/null 2>&1; then
+  xdg-open "$URL" >/dev/null 2>&1 || true
+else
+  printf '%s\n' "$URL"
+fi

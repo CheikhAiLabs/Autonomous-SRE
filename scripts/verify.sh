@@ -27,6 +27,24 @@ diagnose_workload() {
   kubectl -n "$namespace" get events --sort-by=.lastTimestamp | tail -n 50 || true
 }
 
+cilium_live_healthy() {
+  local nodes node
+  mapfile -t nodes < <(kubectl get nodes -l kubernetes.io/os=linux -o json | jq -r '.items[].metadata.name')
+  [ "${#nodes[@]}" -gt 0 ] || return 1
+
+  for node in "${nodes[@]}"; do
+    kubectl -n kube-system get pods -l k8s-app=cilium \
+      --field-selector "spec.nodeName=$node" -o json 2>/dev/null \
+      | jq -e '
+          (.items | length) == 1 and
+          .items[0].metadata.deletionTimestamp == null and
+          .items[0].status.phase == "Running" and
+          ((.items[0].status.containerStatuses // []) | length) > 0 and
+          all((.items[0].status.containerStatuses // [])[]; .ready == true)
+        ' >/dev/null || return 1
+  done
+}
+
 kubectl wait --for=condition=Ready nodes --all --timeout=3m >/dev/null && pass "Kubernetes nodes" || fail "Kubernetes nodes"
 
 IMAGE_PULL_FAILURES="$(
@@ -51,7 +69,14 @@ if [ -n "$IMAGE_PULL_FAILURES" ]; then
 else
   pass "Container startup health"
 fi
-kubectl -n kube-system rollout status daemonset/cilium --timeout=2m >/dev/null && pass "Cilium" || fail "Cilium"
+
+if cilium_live_healthy; then
+  pass "Cilium"
+else
+  kubectl -n kube-system get daemonset/cilium -o wide >&2 || true
+  kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
+  fail "Cilium"
+fi
 kubectl -n sre-system rollout status statefulset/postgres --timeout=3m >/dev/null && pass "PostgreSQL" || fail "PostgreSQL"
 if kubectl -n sre-system rollout status deployment/opa --timeout=2m >/dev/null; then
   pass "OPA"
@@ -112,11 +137,33 @@ kubectl -n sre-system exec deployment/ollama -- ollama list >/dev/null && pass "
 if kubectl -n sre-system wait certificate/autonomous-sre --for=condition=Ready --timeout=5m >/dev/null 2>&1; then
   pass "Let's Encrypt certificate"
 else
-  echo "  Certificate is not Ready yet; inspect with: kubectl -n sre-system describe certificate autonomous-sre"
+  echo "Certificate is not Ready." >&2
+  kubectl -n sre-system describe certificate autonomous-sre >&2 || true
+  fail "Let's Encrypt certificate"
 fi
 
 FQDN="$(cat "$ROOT/.generated/platform-fqdn" 2>/dev/null || true)"
-if [ -n "$FQDN" ]; then
-  echo "Dashboard: https://$FQDN"
+if [ -z "$FQDN" ]; then
+  echo "Platform FQDN is unavailable." >&2
+  fail "Public application routes"
 fi
-echo "Kubernetes Explorer: run 'make headlamp' for secure local access"
+
+if curl -fsSL --retry 12 --retry-all-errors --retry-delay 5 --max-time 15 "https://$FQDN/" >/dev/null; then
+  pass "Public dashboard route"
+else
+  echo "Public dashboard is not reachable at https://$FQDN/" >&2
+  kubectl -n sre-system get gateway,httproute -o wide >&2 || true
+  fail "Public dashboard route"
+fi
+
+if curl -fsSL --retry 12 --retry-all-errors --retry-delay 5 --max-time 15 "https://$FQDN/kubernetes/" >/dev/null; then
+  pass "Public Headlamp route"
+else
+  echo "Headlamp is not reachable at https://$FQDN/kubernetes/" >&2
+  kubectl -n sre-system get service/headlamp,endpoints/headlamp -o wide >&2 || true
+  kubectl -n sre-system get gateway,httproute -o wide >&2 || true
+  fail "Public Headlamp route"
+fi
+
+echo "Dashboard: https://$FQDN"
+echo "Kubernetes Explorer: https://$FQDN/kubernetes/"
