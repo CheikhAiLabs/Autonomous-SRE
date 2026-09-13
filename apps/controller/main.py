@@ -11,6 +11,21 @@ from autonomous_sre.prometheus import PrometheusClient
 from autonomous_sre.tokens import verify_approval_token
 
 
+def log_remediation(
+    event: str,
+    incident_id: UUID,
+    plan: RemediationPlan,
+    message: str = "",
+) -> None:
+    target = f"{plan.namespace}/{plan.target_kind}/{plan.target_name}"
+    suffix = f" message={message!r}" if message else ""
+    print(
+        f"remediation-{event} incident={incident_id} action={plan.action} "
+        f"target={target}{suffix}",
+        flush=True,
+    )
+
+
 async def verify_recovery(
     plan: RemediationPlan,
     executor: KubernetesExecutor,
@@ -95,6 +110,7 @@ async def main() -> None:
         incident_id = UUID(str(payload["incident_id"]))
         plan = RemediationPlan.model_validate(payload["plan"])
         mode = str(payload.get("mode", "autonomous-low-risk"))
+        log_remediation("received", incident_id, plan, f"mode={mode}")
 
         if mode == "approved":
             approval_token = str(payload.get("approval_token", ""))
@@ -104,6 +120,12 @@ async def main() -> None:
                     "blocked",
                     "Controller rejected invalid or expired approval proof",
                     incident_id,
+                )
+                log_remediation(
+                    "blocked",
+                    incident_id,
+                    plan,
+                    "invalid or expired approval proof",
                 )
                 result = RemediationResult(
                     incident_id=incident_id,
@@ -115,6 +137,12 @@ async def main() -> None:
 
         decision = await policy.decide(plan, mode=mode)
         allowed = decision.result.value == "allow"
+        log_remediation(
+            "policy",
+            incident_id,
+            plan,
+            f"decision={decision.result.value} reason={decision.reason}",
+        )
 
         if not allowed:
             await record_agent_activity(
@@ -137,7 +165,9 @@ async def main() -> None:
                     f"Executing {plan.action} on {plan.namespace}/{plan.target_name}",
                     incident_id,
                 )
+                log_remediation("executing", incident_id, plan)
                 details = await executor.execute(plan)
+                log_remediation("executed", incident_id, plan, repr(details))
                 await record_agent_activity(
                     "remediation-controller",
                     "success",
@@ -152,6 +182,12 @@ async def main() -> None:
                     incident_id,
                 )
                 verified, verification = await verify_recovery(plan, executor)
+                log_remediation(
+                    "verified" if verified else "verification-failed",
+                    incident_id,
+                    plan,
+                    repr(verification),
+                )
                 await record_agent_activity(
                     "recovery-verifier",
                     "success" if verified else "error",
@@ -171,6 +207,7 @@ async def main() -> None:
                     details=details,
                 )
             except Exception as exc:
+                log_remediation("error", incident_id, plan, str(exc))
                 await record_agent_activity(
                     "remediation-controller",
                     "error",
@@ -183,6 +220,12 @@ async def main() -> None:
                     message=str(exc),
                 )
         await publish(nc, "remediation.result", result.model_dump(mode="json"))
+        log_remediation(
+            "result",
+            incident_id,
+            plan,
+            f"success={result.success} message={result.message}",
+        )
 
     await subscribe_json(
         nc,

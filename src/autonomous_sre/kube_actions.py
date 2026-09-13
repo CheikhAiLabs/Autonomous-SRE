@@ -138,7 +138,13 @@ class KubernetesExecutor:
 
         current_revision = owned[0][0]
         previous_revision, previous_rs = owned[1]
-        previous_template = previous_rs.spec.template.to_dict()
+        # Model.to_dict() uses Python attribute names such as service_account_name,
+        # which are not valid Kubernetes JSON field names. Serialize through the
+        # Kubernetes ApiClient so the merge patch uses serviceAccountName,
+        # imagePullSecrets, terminationGracePeriodSeconds, etc.
+        previous_template = client.ApiClient().sanitize_for_serialization(
+            previous_rs.spec.template
+        )
         metadata = previous_template.setdefault("metadata", {})
         annotations = metadata.setdefault("annotations", {}) or {}
         annotations["autonomous-sre/rollback-from-revision"] = str(current_revision)
