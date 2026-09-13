@@ -120,14 +120,104 @@ cilium_on_node_healthy() {
     --field-selector "spec.nodeName=$node" -o json 2>/dev/null \
     | jq -e '
         (.items | length) == 1 and
+        .items[0].metadata.deletionTimestamp == null and
         .items[0].status.phase == "Running" and
         ((.items[0].status.containerStatuses // []) | length) > 0 and
         all((.items[0].status.containerStatuses // [])[]; .ready == true)
       ' >/dev/null
 }
 
+ansible_host_for_node() {
+  local node="$1" node_ip
+  node_ip="$(kubectl get node "$node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)"
+  [ -n "$node_ip" ] || return 1
+  awk -v ip="$node_ip" '
+    $0 ~ ("private_ip=" ip "([[:space:]]|$)") { print $1; exit }
+  ' "$GENERATED/inventory.ini"
+}
+
+dump_worker_agent_diagnostics() {
+  local ansible_host="$1" node="$2"
+  echo "K3s agent diagnostics for $node ($ansible_host):" >&2
+  "$ROOT/.deploy-venv/bin/ansible" "$ansible_host" \
+    -i "$GENERATED/inventory.ini" \
+    -m ansible.builtin.shell \
+    -a 'set -o pipefail; systemctl status k3s-agent --no-pager -l || true; echo "--- journal ---"; journalctl -u k3s-agent -n 200 --no-pager || true; echo "--- resources ---"; df -h; free -m; echo "--- routes ---"; ip route' \
+    -o >&2 || true
+  kubectl describe node "$node" >&2 || true
+  kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
+  kubectl get events -A --sort-by=.lastTimestamp | tail -n 80 >&2 || true
+}
+
+restart_worker_agent() {
+  local node="$1" ansible_host attempt pod
+  ansible_host="$(ansible_host_for_node "$node")"
+  if [ -z "$ansible_host" ]; then
+    echo "Could not map Kubernetes node $node to the Ansible inventory." >&2
+    return 1
+  fi
+
+  echo "Node $node stopped reporting. Restarting k3s-agent on $ansible_host."
+  if ! "$ROOT/.deploy-venv/bin/ansible" "$ansible_host" \
+    -i "$GENERATED/inventory.ini" \
+    -m ansible.builtin.shell \
+    -a 'systemctl reset-failed k3s-agent || true; systemctl restart k3s-agent; systemctl is-active --quiet k3s-agent' \
+    -o; then
+    dump_worker_agent_diagnostics "$ansible_host" "$node"
+    return 1
+  fi
+
+  # Give the kubelet a first chance to renew its lease and process any pending
+  # DaemonSet deletion before forcing away an object left behind while offline.
+  for attempt in $(seq 1 18); do
+    if node_ready "$node" && cilium_on_node_healthy "$node"; then
+      echo "$node recovered after restarting k3s-agent."
+      return 0
+    fi
+    sleep 5
+  done
+
+  pod="$(kubectl -n kube-system get pods -l k8s-app=cilium \
+    --field-selector "spec.nodeName=$node" -o json \
+    | jq -r '.items[]? | select(.metadata.deletionTimestamp != null) | .metadata.name' \
+    | head -n1)"
+  if [ -n "$pod" ]; then
+    echo "Removing stale terminating Cilium pod $pod from $node after agent restart."
+    kubectl -n kube-system delete pod "$pod" --grace-period=0 --force --wait=false || true
+  fi
+
+  for attempt in $(seq 1 36); do
+    if node_ready "$node" && cilium_on_node_healthy "$node"; then
+      echo "$node recovered with a healthy Cilium agent."
+      return 0
+    fi
+    sleep 5
+  done
+
+  dump_worker_agent_diagnostics "$ansible_host" "$node"
+  return 1
+}
+
+recycle_cilium_on_node() {
+  local node="$1" pod attempt
+  pod="$(kubectl -n kube-system get pods -l k8s-app=cilium \
+    --field-selector "spec.nodeName=$node" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  [ -n "$pod" ] || return 1
+
+  echo "Node $node is reachable but Cilium is unhealthy. Recycling $pod."
+  kubectl -n kube-system delete pod "$pod" --grace-period=0 --force --wait=false || true
+  for attempt in $(seq 1 36); do
+    if node_ready "$node" && cilium_on_node_healthy "$node"; then
+      echo "$node recovered with a fresh Cilium pod."
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
 repair_not_ready_nodes() {
-  local nodes node pod attempt recovered
+  local nodes node ready_status ready_reason ansible_host
   mapfile -t nodes < <(
     kubectl get nodes -o json \
       | jq -r '.items[] | select(any(.status.conditions[]?; .type == "Ready" and .status != "True")) | .metadata.name'
@@ -135,42 +225,35 @@ repair_not_ready_nodes() {
 
   [ "${#nodes[@]}" -gt 0 ] || return 0
 
-  echo "Detected non-ready nodes after K3s reconciliation: ${nodes[*]}"
+  echo "Detected non-ready nodes: ${nodes[*]}"
   kubectl get nodes -o wide >&2 || true
 
-  if ! kubectl -n kube-system get daemonset/cilium >/dev/null 2>&1; then
-    echo "Cilium is not installed yet; node readiness will be established during platform installation."
-    return 0
-  fi
-
   for node in "${nodes[@]}"; do
-    echo "Repairing CNI state on $node by recycling only its Cilium pod."
-    pod="$(kubectl -n kube-system get pods -l k8s-app=cilium \
-      --field-selector "spec.nodeName=$node" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    read -r ready_status ready_reason < <(
+      kubectl get node "$node" -o json \
+        | jq -r '[.status.conditions[]? | select(.type == "Ready")][0] | [.status, .reason] | @tsv'
+    )
 
-    if [ -z "$pod" ]; then
-      echo "No Cilium pod found on $node." >&2
+    if [ "$ready_status" = "Unknown" ] || [ "$ready_reason" = "NodeStatusUnknown" ]; then
+      if ! restart_worker_agent "$node"; then
+        return 1
+      fi
       continue
     fi
 
-    kubectl -n kube-system delete pod "$pod" --wait=false
-    recovered=false
-    for attempt in $(seq 1 60); do
-      if cilium_on_node_healthy "$node" && node_ready "$node"; then
-        recovered=true
-        echo "$node recovered and is Ready."
-        break
+    if kubectl -n kube-system get daemonset/cilium >/dev/null 2>&1; then
+      if recycle_cilium_on_node "$node"; then
+        continue
       fi
-      sleep 5
-    done
-
-    if [ "$recovered" != true ]; then
-      echo "$node did not recover after recycling Cilium." >&2
-      kubectl describe node "$node" >&2 || true
-      kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
-      kubectl get events -A --sort-by=.lastTimestamp | tail -n 80 >&2 || true
-      return 1
     fi
+
+    ansible_host="$(ansible_host_for_node "$node" || true)"
+    if [ -n "$ansible_host" ]; then
+      dump_worker_agent_diagnostics "$ansible_host" "$node"
+    else
+      kubectl describe node "$node" >&2 || true
+    fi
+    return 1
   done
 
   all_nodes_ready
@@ -201,9 +284,9 @@ if [ ! -s "$KUBECONFIG" ]; then
 fi
 kubectl cluster-info >/dev/null
 
-# Older deployments restarted K3s agents on every run. With Cilium this can
-# leave a worker's CNI registration stale while the Cilium container itself is
-# still healthy. Reuse a matching cluster and repair only affected nodes once.
+# Reuse a matching cluster instead of reinstalling K3s on every deployment.
+# When a worker has stopped posting status, repair its k3s-agent over SSH first;
+# only use a Cilium recycle for a node whose kubelet is still reachable.
 repair_not_ready_nodes
 
 progress 75 "Installing platform services"
