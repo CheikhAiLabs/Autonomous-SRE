@@ -17,38 +17,53 @@ export TF_VAR_control_plane_type="$CONTROL_PLANE_TYPE" TF_VAR_worker_type="$WORK
 export TF_VAR_runner_type="$RUNNER_TYPE"
 
 scw_json() {
-  scw -o json "$@"
+  scw "$@" -o json
+}
+
+retry() {
+  local attempts="$1" delay="$2" try
+  shift 2
+  for try in $(seq 1 "$attempts"); do
+    if "$@"; then
+      return 0
+    fi
+    if [ "$try" -lt "$attempts" ]; then
+      echo "Retrying in ${delay}s ($try/$attempts)..." >&2
+      sleep "$delay"
+    fi
+  done
+  return 1
 }
 
 managed_server_ids() {
   scw_json instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
-    | jq -r '.[]? | select((.name // "") == "autonomous-sre-cp-01" or ((.name // "") | startswith("autonomous-sre-worker-")) or (.name // "") == "autonomous-sre-runner-01") | .id'
+    | jq -r '(.servers // .)[]? | select((.name // "") == "autonomous-sre-cp-01" or ((.name // "") | startswith("autonomous-sre-worker-")) or (.name // "") == "autonomous-sre-runner-01") | .id'
 }
 
 platform_server_ids() {
   scw_json instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
-    | jq -r '.[]? | select((.name // "") == "autonomous-sre-cp-01" or ((.name // "") | startswith("autonomous-sre-worker-"))) | .id'
+    | jq -r '(.servers // .)[]? | select((.name // "") == "autonomous-sre-cp-01" or ((.name // "") | startswith("autonomous-sre-worker-"))) | .id'
 }
 
 runner_server_ids() {
   scw_json instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
-    | jq -r '.[]? | select((.name // "") == "autonomous-sre-runner-01") | .id'
+    | jq -r '(.servers // .)[]? | select((.name // "") == "autonomous-sre-runner-01") | .id'
 }
 
 security_group_ids() {
   local name="$1"
   scw_json instance security-group list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" name="$name" \
-    | jq -r --arg name "$name" '.[]? | select((.name // "") == $name) | .id'
+    | jq -r --arg name "$name" '(.security_groups // .)[]? | select((.name // "") == $name) | .id'
 }
 
 private_network_ids() {
   scw_json vpc private-network list project-id="$SCW_PROJECT_ID" region="$SCW_REGION" \
-    | jq -r '.[]? | select((.name // "") == "autonomous-sre-cluster") | .id'
+    | jq -r '(.private_networks // .)[]? | select((.name // "") == "autonomous-sre-cluster") | .id'
 }
 
 vpc_ids() {
   scw_json vpc vpc list project-id="$SCW_PROJECT_ID" region="$SCW_REGION" \
-    | jq -r '.[]? | select((.name // "") == "autonomous-sre-vpc") | .id'
+    | jq -r '(.vpcs // .)[]? | select((.name // "") == "autonomous-sre-vpc") | .id'
 }
 
 delete_servers() {
@@ -56,7 +71,7 @@ delete_servers() {
   while read -r id; do
     [ -n "$id" ] || continue
     echo "Deleting Scaleway Instance $id and its attached IP/volumes..."
-    scw instance server delete "$id" zone="$SCW_ZONE" force-shutdown=true with-volumes=all with-ip=true
+    retry 3 3 scw instance server delete "$id" zone="$SCW_ZONE" force-shutdown=true with-volumes=all with-ip=true
   done
 }
 
@@ -65,23 +80,23 @@ delete_named_security_groups() {
   while read -r id; do
     [ -n "$id" ] || continue
     echo "Deleting security group $name ($id)..."
-    scw instance security-group delete "$id" zone="$SCW_ZONE"
+    retry 5 3 scw instance security-group delete "$id" zone="$SCW_ZONE"
   done < <(security_group_ids "$name")
 }
 
 delete_platform_network_orphans() {
   local id
 
-  # The Scaleway API does not allow Terraform to detach these Private NIC
-  # resources reliably before the Instance disappears. Deleting the managed
-  # Instances first removes their NIC attachments and lets the remaining
-  # state/network cleanup complete deterministically.
+  # Scaleway may reject Private NIC removal while the Instance is still
+  # attached. Deleting the managed Instances first removes those attachments
+  # and allows the network cleanup to complete deterministically.
   delete_servers < <(platform_server_ids)
+  sleep 3
 
   while read -r id; do
     [ -n "$id" ] || continue
     echo "Deleting private network $id..."
-    scw vpc private-network delete "$id" region="$SCW_REGION"
+    retry 5 3 scw vpc private-network delete "$id" region="$SCW_REGION"
   done < <(private_network_ids)
 
   delete_named_security_groups "autonomous-sre-cluster"
@@ -89,7 +104,7 @@ delete_platform_network_orphans() {
   while read -r id; do
     [ -n "$id" ] || continue
     echo "Deleting VPC $id..."
-    scw vpc vpc delete "$id" region="$SCW_REGION"
+    retry 5 3 scw vpc vpc delete "$id" region="$SCW_REGION"
   done < <(vpc_ids)
 }
 
