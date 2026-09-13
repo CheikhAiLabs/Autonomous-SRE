@@ -2,7 +2,7 @@ import asyncio
 from uuid import UUID
 
 from autonomous_sre.config import get_settings
-from autonomous_sre.database import init_db, record_agent_activity
+from autonomous_sre.database import init_db, record_agent_activity, set_agent_status
 from autonomous_sre.events import connect_nats, publish, subscribe_json
 from autonomous_sre.kube_actions import KubernetesExecutor
 from autonomous_sre.models import RemediationPlan, RemediationResult
@@ -71,6 +71,25 @@ async def main() -> None:
     )
     executor = KubernetesExecutor()
     policy = PolicyClient()
+
+    async def heartbeat() -> None:
+        while True:
+            try:
+                await set_agent_status(
+                    "remediation-controller",
+                    "watching",
+                    "Ready and subscribed for remediation requests",
+                    details={"heartbeat": "healthy"},
+                )
+                await set_agent_status(
+                    "recovery-verifier",
+                    "idle",
+                    "Ready to verify remediations",
+                    details={"heartbeat": "healthy"},
+                )
+            except Exception as exc:
+                print(f"control-plane-heartbeat-error: {exc}", flush=True)
+            await asyncio.sleep(15)
 
     async def handle(payload: dict[str, object]) -> None:
         incident_id = UUID(str(payload["incident_id"]))
@@ -166,8 +185,13 @@ async def main() -> None:
         await publish(nc, "remediation.result", result.model_dump(mode="json"))
 
     await subscribe_json(nc, "remediation.requested", handle)
-    while True:
-        await asyncio.sleep(3600)
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    finally:
+        heartbeat_task.cancel()
+        await nc.close()
 
 
 if __name__ == "__main__":
