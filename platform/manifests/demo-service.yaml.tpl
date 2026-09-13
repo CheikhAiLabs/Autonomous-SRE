@@ -91,7 +91,7 @@ spec:
             sre_target_kind: "Deployment"
             sre_target_name: "demo-service"
             sre_blast_radius: "1"
-            sre_verify_query: 'sum(rate(sre_demo_requests_total{status=~"5.."}[1m])) / sum(rate(sre_demo_requests_total[1m]))'
+            sre_verify_query: '(sum(rate(sre_demo_requests_total{status=~"5.."}[1m])) or vector(0)) / sum(rate(sre_demo_requests_total[1m]))'
             sre_verify_threshold: "0.10"
 
         - alert: DemoServiceReplicaFloorBreached
