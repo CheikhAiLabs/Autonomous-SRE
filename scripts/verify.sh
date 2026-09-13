@@ -105,6 +105,37 @@ kubectl -n demo rollout status deployment/demo-service --timeout=3m >/dev/null &
 kubectl get --raw '/api/v1/namespaces/sre-system/services/http:autonomous-sre-api:8000/proxy/healthz' | grep -q 'ok' && pass "API health endpoint" || fail "API health endpoint"
 kubectl get --raw '/api/v1/namespaces/demo/services/http:demo-service:8080/proxy/healthz' | grep -q 'ok' && pass "Demo health endpoint" || fail "Demo health endpoint"
 
+SYSTEM_JSON="$(kubectl get --raw '/api/v1/namespaces/sre-system/services/http:autonomous-sre-api:8000/proxy/api/v1/system')"
+if printf '%s' "$SYSTEM_JSON" | jq -e '.mail_enabled == true' >/dev/null; then
+  pass "SMTP notification configuration"
+else
+  echo "SMTP notification credentials are not fully configured in the running SRE services." >&2
+  printf '%s' "$SYSTEM_JSON" | jq '{mail_enabled, report_recipient}' >&2 || true
+  fail "SMTP notification configuration"
+fi
+
+if kubectl -n sre-system exec deployment/autonomous-sre-worker -- python -c '
+import os
+import smtplib
+import ssl
+
+host, port = os.environ["SMTP_SMARTHOST"].rsplit(":", 1)
+username = os.environ["SMTP_USERNAME"]
+password = os.environ["SMTP_PASSWORD"]
+if not username or not password:
+    raise SystemExit(2)
+with smtplib.SMTP(host, int(port), timeout=15) as smtp:
+    smtp.ehlo()
+    smtp.starttls(context=ssl.create_default_context())
+    smtp.ehlo()
+    smtp.login(username, password)
+' >/dev/null 2>&1; then
+  pass "SMTP authentication preflight"
+else
+  echo "SMTP is configured but the worker could not complete STARTTLS/login." >&2
+  fail "SMTP authentication preflight"
+fi
+
 AGENTS_JSON="$(kubectl get --raw '/api/v1/namespaces/sre-system/services/http:autonomous-sre-api:8000/proxy/api/v1/agents')"
 if printf '%s' "$AGENTS_JSON" | python3 -c '
 import json
