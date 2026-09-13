@@ -156,34 +156,31 @@ async def find_recent_by_fingerprint(fingerprint: str, cooldown_seconds: int) ->
         return row.to_model() if row else None
 
 
-async def set_agent_status(
+async def touch_agent_status(
     agent_name: str,
-    status: str,
-    message: str,
-    incident_id: UUID | None = None,
+    default_status: str,
+    default_message: str,
     details: dict[str, Any] | None = None,
 ) -> None:
-    """Update live agent state without polluting the incident activity journal."""
+    """Refresh agent liveness without overwriting an active workflow state."""
     now = datetime.now(UTC)
-    payload = details or {}
     async with SessionLocal() as session:
         current = await session.get(AgentStatusRow, agent_name)
         if current is None:
             current = AgentStatusRow(
                 name=agent_name,
-                status=status,
-                message=message,
-                incident_id=incident_id,
-                details=payload,
+                status=default_status,
+                message=default_message,
+                incident_id=None,
+                details=details or {},
                 updated_at=now,
             )
             session.add(current)
         else:
-            current.status = status
-            current.message = message
-            current.incident_id = incident_id
-            current.details = payload
             current.updated_at = now
+            merged = dict(current.details or {})
+            merged.update(details or {})
+            current.details = merged
         await session.commit()
 
 
