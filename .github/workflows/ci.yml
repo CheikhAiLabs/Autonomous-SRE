@@ -41,7 +41,13 @@ jobs:
         run: uv run pytest -q
 
       - name: Bash syntax and ShellCheck
+        shell: bash
         run: |
+          set -Eeuo pipefail
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y shellcheck
+          fi
           find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
           find scripts -type f -name '*.sh' -print0 | xargs -0 shellcheck --severity=warning
 
@@ -77,6 +83,7 @@ jobs:
       - uses: opentofu/setup-opentofu@v2.0.2
         with:
           tofu_version: 1.12.6
+          tofu_wrapper: false
       - name: Format check
         run: tofu -chdir=infrastructure/${{ matrix.stack }} fmt -check -recursive
       - name: Init without backend
