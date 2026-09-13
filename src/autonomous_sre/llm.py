@@ -13,7 +13,10 @@ from autonomous_sre.models import Diagnosis, Evidence
 class LocalReasoner:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.client = httpx.AsyncClient(base_url=self.settings.ollama_url, timeout=90.0)
+        self.client = httpx.AsyncClient(
+            base_url=self.settings.ollama_url,
+            timeout=self.settings.ollama_timeout_seconds,
+        )
 
     async def diagnose(self, evidence: Evidence) -> Diagnosis:
         actions = safe_action_descriptions()
@@ -127,7 +130,7 @@ class LocalReasoner:
             affected_resources=targets,
             rationale=(
                 "Deterministic fallback diagnosis and bounded remediation recommendation "
-                "because the local LLM was unavailable."
+                "because the local LLM was unavailable or exceeded its response deadline."
             ),
             recommended_action=action,
             recommended_parameters=parameters,
