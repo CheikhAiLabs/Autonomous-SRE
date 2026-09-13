@@ -113,7 +113,7 @@ releases:
       - config:
           inCluster: true
           baseURL: /kubernetes
-          unsafeUseServiceAccountToken: false
+          unsafeUseServiceAccountToken: true
           enableHelm: false
           staticPlugins:
             enabled: true
