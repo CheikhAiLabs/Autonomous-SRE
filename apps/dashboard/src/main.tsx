@@ -240,7 +240,7 @@ function buildPipelineStages(
 ): PipelineStage[] {
   return agentDefinitions.map((definition, index) => {
     const event = incident
-      ? events.find(item => item.incident_id === incident.id && item.agent_name === definition.name)
+      ? events.filter(item => item.incident_id === incident.id && item.agent_name === definition.name).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0]
       : undefined
     const liveState = agents.find(item => item.name === definition.name)
     const liveStateMatchesIncident = Boolean(liveState && liveState.incident_id === incident?.id)
@@ -259,7 +259,7 @@ function buildPipelineStages(
     if (event) {
       message = event.message
       time = event.created_at
-    } else if (liveState?.incident_id === incident?.id) {
+    } else if (liveStateMatchesIncident && liveState) {
       message = liveState.message
     } else if (incident?.status === 'recovered' && state === 'complete') {
       message = 'Completed successfully'
