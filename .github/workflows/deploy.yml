@@ -11,13 +11,12 @@ permissions:
   contents: read
   packages: read
 
-# Production deployment is singleton and serialized. Never interrupt a live
-# infrastructure/Helm reconciliation: a later validated revision waits for the
-# current deployment to finish, which avoids leaving Helm releases or CRDs in
-# transient states.
+# Production deployment is singleton. A newer validated revision supersedes an
+# older run so a wedged SSH/systemd operation cannot block production for the
+# full workflow timeout. deploy-ci is idempotent and re-verifies the platform.
 concurrency:
   group: autonomous-sre-production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
