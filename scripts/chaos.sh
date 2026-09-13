@@ -50,23 +50,6 @@ incident_failure_reason() {
     || printf 'unavailable\n'
 }
 
-print_incident_report_status() {
-  local alert_name="$1" snapshot incident_id report
-  snapshot="$(latest_incident_snapshot "$alert_name")"
-  incident_id="$(incident_id_from_snapshot "$snapshot")"
-  if [ -z "$incident_id" ] || [ "$incident_id" = "unknown" ] || [ "$incident_id" = "none" ]; then
-    return 0
-  fi
-
-  sleep 2
-  report="$(kubectl get --raw "/api/v1/namespaces/sre-system/services/http:autonomous-sre-api:8000/proxy/api/v1/incidents/${incident_id}/report" 2>/dev/null || true)"
-  if [ -n "$report" ]; then
-    printf '  incident=%s, email=%s\n' \
-      "$(printf '%s' "$report" | jq -r '.status // "unknown"')" \
-      "$(printf '%s' "$report" | jq -r '.email_delivery.status // "unknown"')"
-  fi
-}
-
 print_pipeline_diagnostics() {
   local alert_name="$1" snapshot incident_id
   snapshot="$(latest_incident_snapshot "$alert_name")"
@@ -106,6 +89,50 @@ fail_on_new_failed_incident() {
     return 1
   fi
   return 0
+}
+
+wait_for_incident_completion() {
+  local alert_name="$1" baseline_id="$2"
+  local snapshot status incident_id report email_status reason
+
+  for _ in $(seq 1 45); do
+    snapshot="$(latest_incident_snapshot "$alert_name")"
+    status="$(printf '%s' "$snapshot" | awk -F/ '{print $1}')"
+    incident_id="$(incident_id_from_snapshot "$snapshot")"
+
+    if [ "$incident_id" = "none" ] \
+      || [ "$incident_id" = "unknown" ] \
+      || [ "$incident_id" = "$baseline_id" ]; then
+      sleep 2
+      continue
+    fi
+
+    if [ "$status" = "failed" ]; then
+      reason="$(incident_failure_reason "$incident_id")"
+      echo "✗ Autonomous-SRE marked incident $incident_id as failed: $reason" >&2
+      print_pipeline_diagnostics "$alert_name"
+      return 1
+    fi
+
+    if [ "$status" = "recovered" ]; then
+      report="$(kubectl get --raw "/api/v1/namespaces/sre-system/services/http:autonomous-sre-api:8000/proxy/api/v1/incidents/${incident_id}/report" 2>/dev/null || true)"
+      if [ -n "$report" ]; then
+        email_status="$(printf '%s' "$report" | jq -r '.email_delivery.status // "unknown"')"
+        if [ "$email_status" != "not_attempted" ] && [ "$email_status" != "unknown" ]; then
+          printf '  incident=%s, email=%s\n' \
+            "$(printf '%s' "$report" | jq -r '.status // "unknown"')" \
+            "$email_status"
+          return 0
+        fi
+      fi
+    fi
+
+    sleep 2
+  done
+
+  echo "✗ Remediation action completed, but incident closure/email status did not settle in time" >&2
+  print_pipeline_diagnostics "$alert_name"
+  return 1
 }
 
 cleanup() {
@@ -168,9 +195,13 @@ case "$SCENARIO" in
       sleep 5
     done
     if [ "$recovered" = true ]; then
-      SCENARIO_OK=true
-      echo "✓ Autonomous replica-floor remediation observed"
-      print_incident_report_status "$ALERT_NAME"
+      echo "✓ Autonomous replica-floor action observed; waiting for verified incident closure..."
+      if wait_for_incident_completion "$ALERT_NAME" "$BASELINE_INCIDENT_ID"; then
+        SCENARIO_OK=true
+        echo "✓ Autonomous replica-floor remediation verified end to end"
+      else
+        exit 1
+      fi
     else
       echo "✗ Autonomous replica-floor remediation was not observed within timeout" >&2
       print_pipeline_diagnostics "$ALERT_NAME"
@@ -212,9 +243,13 @@ case "$SCENARIO" in
       sleep 5
     done
     if [ "$recovered" = true ]; then
-      SCENARIO_OK=true
-      echo "✓ Autonomous rollback observed"
-      print_incident_report_status "$ALERT_NAME"
+      echo "✓ Autonomous rollback action observed; waiting for recovery verification and incident closure..."
+      if wait_for_incident_completion "$ALERT_NAME" "$BASELINE_INCIDENT_ID"; then
+        SCENARIO_OK=true
+        echo "✓ Autonomous rollback verified end to end"
+      else
+        exit 1
+      fi
     else
       echo "✗ Autonomous rollback was not observed within timeout" >&2
       print_pipeline_diagnostics "$ALERT_NAME"
