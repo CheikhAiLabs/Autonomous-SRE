@@ -11,12 +11,13 @@ permissions:
   contents: read
   packages: read
 
-# Production deployment is singleton. A newer validated revision supersedes an
-# older run, and the production wrapper performs one bounded worker recovery
-# and retry when Kubernetes reports a stale worker node.
+# Production deployment is singleton. Never cancel an in-flight OpenTofu apply:
+# cancelling it can leave a remote-state lock behind. New deployments queue and
+# run serially; the production wrapper can safely recover a stale lock from a
+# previously cancelled run on the same self-hosted runner.
 concurrency:
   group: autonomous-sre-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -50,6 +51,7 @@ jobs:
       GITHUB_REPOSITORY: ${{ github.repository }}
       GITHUB_ACTOR: ${{ github.actor }}
       IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+      TF_CLI_ARGS_apply: -lock-timeout=30s
     steps:
       - uses: actions/checkout@v7
         with:
