@@ -25,6 +25,12 @@ resource "scaleway_instance_security_group" "cluster" {
   inbound_default_policy  = "drop"
   outbound_default_policy = "accept"
 
+  # Scaleway blocks remote SMTP ports 25/465/587 by default independently of
+  # the normal outbound policy. Incident notifications use authenticated SMTP
+  # on port 587, so disable that provider-level block for this security group.
+  # This only takes effect when the Scaleway organization is authorized for SMTP.
+  enable_default_security = false
+
   # K3s, Cilium and node-to-node traffic remain on the private VPC.
   inbound_rule {
     action   = "accept"
