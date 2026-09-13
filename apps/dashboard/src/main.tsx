@@ -63,6 +63,14 @@ type SystemStatus = {
   poll_interval_seconds: number
   mail_enabled: boolean
   report_recipient?: string | null
+  event_delivery?: string
+}
+
+type EmailDelivery = {
+  status: string
+  message?: string | null
+  recipient?: string | null
+  updated_at?: string | null
 }
 
 type IncidentReport = {
@@ -73,11 +81,12 @@ type IncidentReport = {
   started_at: string
   finished_at: string
   duration_seconds: number
+  email_delivery: EmailDelivery
   timeline: AgentActivity[]
 }
 
 const API = '/api/v1'
-const HEADLAMP_URL = 'http://127.0.0.1:4466/kubernetes/'
+const HEADLAMP_URL = '/kubernetes/'
 
 const agentDefinitions = [
   {name: 'detector', label: 'Detector', icon: Radar, idle: 'Watching Prometheus'},
@@ -101,6 +110,16 @@ function formatDuration(seconds: number) {
 
 function titleCase(value: string) {
   return value.replaceAll('_', ' ').replace(/\b\w/g, char => char.toUpperCase())
+}
+
+function emailDeliveryLabel(status?: string) {
+  switch (status) {
+    case 'success': return 'Delivered'
+    case 'error': return 'Failed'
+    case 'skipped': return 'Skipped'
+    case 'not_attempted': return 'Not attempted'
+    default: return status ? titleCase(status) : '…'
+  }
 }
 
 function App() {
@@ -175,6 +194,10 @@ function App() {
 
   const currentIncident = incidents.find(item => !terminalStatuses.has(item.status))
   const recentActivity = activity.slice(0, 14)
+  const reportEmail = report?.email_delivery
+  const reportEmailDetail = reportEmail?.recipient
+    ? `${reportEmail.message || 'Email delivery recorded'} · ${reportEmail.recipient}`
+    : reportEmail?.message || (system?.mail_enabled ? 'Waiting for incident delivery status.' : 'SMTP is not configured.')
 
   async function decide(kind: 'approve'|'reject') {
     if (!selected) return
@@ -217,7 +240,7 @@ function App() {
 
       <nav>
         <a className="nav-item active" href="/"><Activity size={17}/>Command Center</a>
-        <a className="nav-item" href={HEADLAMP_URL} target="_blank" rel="noreferrer" title="Run make headlamp locally first"><Boxes size={17}/>Kubernetes</a>
+        <a className="nav-item" href={HEADLAMP_URL} target="_blank" rel="noreferrer" title="Open Kubernetes Explorer"><Boxes size={17}/>Kubernetes</a>
       </nav>
 
       <div className="sidebar-status">
@@ -237,7 +260,7 @@ function App() {
         <div className="topbar-actions">
           <span className="live-pill"><i/>Live · 2s</span>
           <button className="icon-button" onClick={refresh} title="Refresh now"><RefreshCw size={17}/></button>
-          <a className="primary-link" href={HEADLAMP_URL} target="_blank" rel="noreferrer" title="Run make headlamp locally first"><Boxes size={16}/>Explore cluster<ExternalLink size={14}/></a>
+          <a className="primary-link" href={HEADLAMP_URL} target="_blank" rel="noreferrer" title="Open Kubernetes Explorer"><Boxes size={16}/>Explore cluster<ExternalLink size={14}/></a>
         </div>
       </header>
 
@@ -264,6 +287,7 @@ function App() {
       <section className="system-strip">
         <SystemItem label="Environment" value={system?.environment || '…'} state="neutral"/>
         <SystemItem label="Control loop" value={system ? `${system.poll_interval_seconds}s interval` : '…'} state="good"/>
+        <SystemItem label="Event bus" value={system?.event_delivery === 'jetstream-durable' ? 'JetStream durable' : '…'} state={system?.event_delivery === 'jetstream-durable' ? 'good' : 'warn'}/>
         <SystemItem label="Post-incident email" value={system?.mail_enabled ? 'Enabled' : 'Not configured'} state={system?.mail_enabled ? 'good' : 'warn'}/>
         <SystemItem label="Report recipient" value={system?.mail_enabled ? (system.report_recipient || 'Configured') : 'SMTP credentials required'} state="neutral"/>
       </section>
@@ -314,7 +338,7 @@ function App() {
             <PostureRow icon={<ShieldAlert/>} title="Approval required" detail="High-impact actions such as cordoning a node." tone="warn"/>
             <PostureRow icon={<ShieldCheck/>} title="Blocked" detail="Namespace deletion, infrastructure destruction and node draining." tone="danger"/>
           </div>
-          <a className="secondary-link" href={HEADLAMP_URL} target="_blank" rel="noreferrer" title="Run make headlamp locally first"><Boxes size={15}/>Inspect live Kubernetes resources<ArrowRight size={14}/></a>
+          <a className="secondary-link" href={HEADLAMP_URL} target="_blank" rel="noreferrer" title="Open Kubernetes Explorer"><Boxes size={15}/>Inspect live Kubernetes resources<ArrowRight size={14}/></a>
         </section>
       </div>
 
@@ -385,7 +409,7 @@ function App() {
               {(report?.timeline || activity.filter(item => item.incident_id === selected.id)).map(item => <div className="report-event" key={item.id}>
                 <i className={item.status}/><div><div><strong>{titleCase(item.agent_name)}</strong><time>{new Date(item.created_at).toLocaleTimeString()}</time></div><p>{item.message}</p></div>
               </div>)}
-              {(report?.timeline || []).length === 0 && <Empty label="No timeline events recorded for this incident."/>}
+              {(report?.timeline || activity.filter(item => item.incident_id === selected.id)).length === 0 && <Empty label="No timeline events recorded for this incident."/>}
             </div>
           </section>}
 
@@ -397,11 +421,11 @@ function App() {
             <div className="report-stats">
               <DetailCard label="Duration" value={report ? formatDuration(report.duration_seconds) : '…'}/>
               <DetailCard label="Final state" value={titleCase(selected.status)}/>
-              <DetailCard label="Email delivery" value={system?.mail_enabled ? 'Enabled' : 'Not configured'} detail={system?.mail_enabled ? system.report_recipient || undefined : 'Configure SMTP credentials to send reports automatically.'}/>
+              <DetailCard label="Email delivery" value={emailDeliveryLabel(reportEmail?.status)} detail={reportEmailDetail}/>
             </div>
             <div className="report-actions">
               <button className="download-button" onClick={downloadReport} disabled={!report}><Download size={16}/>Download JSON report</button>
-              {system?.mail_enabled && <div className="mail-note"><Mail size={15}/>A closing report is sent automatically after remediation.</div>}
+              {system?.mail_enabled && <div className="mail-note"><Mail size={15}/>Closing-report delivery is tracked for this incident.</div>}
             </div>
           </>}
         </div>

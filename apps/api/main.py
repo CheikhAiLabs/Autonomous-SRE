@@ -15,9 +15,10 @@ from autonomous_sre.database import (
 )
 from autonomous_sre.events import connect_nats, publish
 from autonomous_sre.models import IncidentStatus
+from autonomous_sre.reporting import list_incident_activity
 from autonomous_sre.tokens import verify_approval_token
 
-app = FastAPI(title="Autonomous-SRE API", version="0.3.0")
+app = FastAPI(title="Autonomous-SRE API", version="0.4.0")
 nc = None
 
 
@@ -55,6 +56,7 @@ async def system() -> dict[str, object]:
         "poll_interval_seconds": settings.incident_poll_interval_seconds,
         "mail_enabled": mail_enabled,
         "report_recipient": settings.alert_email if settings.alert_email else None,
+        "event_delivery": "jetstream-durable",
     }
 
 
@@ -87,15 +89,11 @@ async def incident_report(incident_id: UUID) -> dict[str, object]:
     if item is None:
         raise HTTPException(404, "incident not found")
 
-    incident_activity = [
-        event
-        for event in await list_agent_activity()
-        if str(event.get("incident_id") or "") == str(item.id)
-    ]
+    incident_activity = await list_incident_activity(item.id)
     notification_events = [
         event for event in incident_activity if event.get("agent_name") == "notification"
     ]
-    latest_notification = notification_events[0] if notification_events else None
+    latest_notification = notification_events[-1] if notification_events else None
 
     payload = item.model_dump(mode="json")
     started = item.created_at

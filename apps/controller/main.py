@@ -184,13 +184,19 @@ async def main() -> None:
                 )
         await publish(nc, "remediation.result", result.model_dump(mode="json"))
 
-    await subscribe_json(nc, "remediation.requested", handle)
+    await subscribe_json(
+        nc,
+        "remediation.requested",
+        handle,
+        durable="remediation-controller",
+    )
     heartbeat_task = asyncio.create_task(heartbeat())
     try:
         while True:
             await asyncio.sleep(3600)
     finally:
         heartbeat_task.cancel()
+        await policy.close()
         await nc.close()
 
 
