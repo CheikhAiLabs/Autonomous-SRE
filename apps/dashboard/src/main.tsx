@@ -243,8 +243,11 @@ function buildPipelineStages(
       ? events.find(item => item.incident_id === incident.id && item.agent_name === definition.name)
       : undefined
     const liveState = agents.find(item => item.name === definition.name)
+    const liveStateMatchesIncident = Boolean(liveState && liveState.incident_id === incident?.id)
     const eventState = event ? visualFromStatus(event.status) : undefined
-    const associatedLiveState = liveState?.incident_id === incident?.id ? visualFromStatus(liveState.status) : undefined
+    const associatedLiveState = liveStateMatchesIncident && liveState
+      ? visualFromStatus(liveState.status)
+      : undefined
     const state = eventState && eventState !== 'idle'
       ? eventState
       : associatedLiveState && associatedLiveState !== 'idle'
@@ -365,7 +368,6 @@ function App() {
 
   const currentIncident = incidents.find(item => !terminalStatuses.has(item.status))
   const focusIncident = currentIncident || incidents[0]
-  const focusEvents = focusIncident ? activity.filter(item => item.incident_id === focusIncident.id) : []
   const pipelineStages = useMemo(
     () => buildPipelineStages(focusIncident, activity, agents),
     [focusIncident, activity, agents],
