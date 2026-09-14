@@ -9,9 +9,9 @@ on:
 permissions:
   contents: read
 
-# CI_RUNNER is set to the dedicated Scaleway runner while it exists and switched
-# back to ubuntu-latest before that runner is destroyed. If the variable is
-# missing, GitHub-hosted is the safe bootstrap/fallback path.
+# Prefer the dedicated Scaleway runner only after bootstrap has confirmed it is
+# online. When the runner is intentionally absent, CI falls back to GitHub-hosted
+# instead of waiting forever on a deleted VM.
 concurrency:
   group: ci-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
@@ -19,7 +19,7 @@ concurrency:
 jobs:
   quality:
     name: Code and policy quality
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNER_ONLINE == 'true' && 'autonomous-sre' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -75,7 +75,7 @@ jobs:
 
   opentofu:
     name: OpenTofu validation
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNER_ONLINE == 'true' && 'autonomous-sre' || 'ubuntu-latest' }}
     strategy:
       matrix:
         stack: [opentofu-runner, opentofu-platform]
@@ -94,7 +94,7 @@ jobs:
 
   dashboard:
     name: Dashboard build
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNER_ONLINE == 'true' && 'autonomous-sre' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6

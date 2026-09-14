@@ -9,6 +9,13 @@ load_scw_credentials
 read -r -p "Type DESTROY-ALL to remove platform and runner: " CONFIRM
 [ "$CONFIRM" = "DESTROY-ALL" ] || { echo "Cancelled"; exit 1; }
 
+# Stop new production work before touching infrastructure. From this point on,
+# CI/Security/Build can use GitHub-hosted runners while the Scaleway runner is
+# kept alive until the platform teardown has fully completed.
+gh variable set RUNNER_ONLINE --repo "$GITHUB_REPOSITORY" --body "false" 2>/dev/null || true
+gh variable set AUTOMATIC_DEPLOY --repo "$GITHUB_REPOSITORY" --body "false" 2>/dev/null || true
+gh variable delete CI_RUNNER --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+
 RUNNER_CIDR="$(gh variable get RUNNER_CIDR --repo "$GITHUB_REPOSITORY" --env production 2>/dev/null || true)"
 [ -n "$RUNNER_CIDR" ] || RUNNER_CIDR="$OPERATOR_CIDR"
 export TF_VAR_project_id="$SCW_PROJECT_ID" TF_VAR_region="$SCW_REGION" TF_VAR_zone="$SCW_ZONE"
@@ -31,9 +38,9 @@ retry() {
   return 1
 }
 
-# Scaleway CLI 2.58.x renders list commands as deterministic tables where
-# the first two columns are ID and NAME. Using that native output avoids
-# depending on JSON envelope shapes that differ across CLI/API versions.
+# Scaleway CLI 2.58.x renders list commands as deterministic tables where the
+# first two columns are ID and NAME. This mirrors what the operator sees in the
+# CLI and avoids JSON envelope differences between CLI/API versions.
 managed_server_ids() {
   scw instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
     | awk 'NR > 1 && ($2 == "autonomous-sre-cp-01" || $2 ~ /^autonomous-sre-worker-/ || $2 == "autonomous-sre-runner-01") {print $1}'
@@ -109,25 +116,30 @@ delete_runner_orphans() {
   delete_named_security_groups "autonomous-sre-runner"
 }
 
+verify_platform_destroyed() {
+  local leftovers=0
+
+  [ -z "$(platform_server_ids)" ] || { echo "Managed Kubernetes Instances still exist." >&2; leftovers=1; }
+  [ -z "$(security_group_ids autonomous-sre-cluster)" ] || { echo "Cluster security group still exists." >&2; leftovers=1; }
+  [ -z "$(private_network_ids)" ] || { echo "Managed private network still exists." >&2; leftovers=1; }
+  [ -z "$(vpc_ids)" ] || { echo "Managed VPC still exists." >&2; leftovers=1; }
+
+  [ "$leftovers" -eq 0 ] || {
+    echo "Platform destroy verification failed. Runner and remote state are being kept for recovery." >&2
+    exit 1
+  }
+}
+
 verify_destroyed() {
   local leftovers=0
 
-  if [ -n "$(managed_server_ids)" ]; then
-    echo "Managed Autonomous-SRE Instances still exist." >&2
-    leftovers=1
-  fi
+  [ -z "$(managed_server_ids)" ] || { echo "Managed Autonomous-SRE Instances still exist." >&2; leftovers=1; }
   if [ -n "$(security_group_ids autonomous-sre-cluster)" ] || [ -n "$(security_group_ids autonomous-sre-runner)" ]; then
     echo "Managed Autonomous-SRE security groups still exist." >&2
     leftovers=1
   fi
-  if [ -n "$(private_network_ids)" ]; then
-    echo "Managed Autonomous-SRE private network still exists." >&2
-    leftovers=1
-  fi
-  if [ -n "$(vpc_ids)" ]; then
-    echo "Managed Autonomous-SRE VPC still exists." >&2
-    leftovers=1
-  fi
+  [ -z "$(private_network_ids)" ] || { echo "Managed Autonomous-SRE private network still exists." >&2; leftovers=1; }
+  [ -z "$(vpc_ids)" ] || { echo "Managed Autonomous-SRE VPC still exists." >&2; leftovers=1; }
 
   [ "$leftovers" -eq 0 ] || {
     echo "Destroy verification failed. Remote state is being kept for recovery." >&2
@@ -138,29 +150,41 @@ verify_destroyed() {
 # Lifecycle invariant: runner first on deploy, runner last on destroy.
 progress 10 "Removing Kubernetes Instances before Private NIC cleanup"
 delete_servers < <(platform_server_ids)
+sleep 3
 
 progress 30 "Destroying platform state-managed resources"
 tofu -chdir="$ROOT/infrastructure/opentofu-platform" init -input=false -backend-config="$GENERATED/platform-backend.hcl" >/dev/null
-tofu -chdir="$ROOT/infrastructure/opentofu-platform" destroy -auto-approve -input=false
-
-progress 50 "Cleaning any platform resources orphaned by a previous interrupted destroy"
-delete_platform_network_orphans
-
-progress 62 "Switching CI to GitHub-hosted fallback"
-gh variable set CI_RUNNER --repo "$GITHUB_REPOSITORY" --body "ubuntu-latest"
-
-progress 65 "Deregistering GitHub Actions runner after platform teardown"
-RUNNER_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '.runners[] | select(.name=="autonomous-sre-scaleway-01") | .id' 2>/dev/null || true)"
-if [ -n "$RUNNER_ID" ]; then
-  gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/runners/$RUNNER_ID" >/dev/null
+if ! tofu -chdir="$ROOT/infrastructure/opentofu-platform" destroy -auto-approve -input=false; then
+  echo "Initial platform destroy failed; cleaning cloud orphans before one required retry." >&2
+  delete_platform_network_orphans
+  tofu -chdir="$ROOT/infrastructure/opentofu-platform" destroy -auto-approve -input=false
 fi
 
-progress 75 "Destroying runner last"
-delete_servers < <(runner_server_ids)
-tofu -chdir="$ROOT/infrastructure/opentofu-runner" init -input=false -backend-config="$GENERATED/runner-backend.hcl" >/dev/null
-tofu -chdir="$ROOT/infrastructure/opentofu-runner" destroy -auto-approve -input=false
+progress 50 "Cleaning any platform resources orphaned by an interrupted destroy"
+delete_platform_network_orphans
 
-progress 88 "Cleaning any runner resources orphaned by a previous interrupted destroy"
+progress 60 "Verifying platform is gone before touching the runner"
+verify_platform_destroyed
+
+progress 70 "Deregistering GitHub Actions runner"
+RUNNER_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '.runners[] | select(.name=="autonomous-sre-scaleway-01") | .id' 2>/dev/null || true)"
+if [ -n "$RUNNER_ID" ]; then
+  gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/runners/$RUNNER_ID" >/dev/null || \
+    echo "Warning: GitHub runner deregistration failed; continuing cloud teardown." >&2
+fi
+
+progress 78 "Destroying runner last"
+delete_servers < <(runner_server_ids)
+sleep 3
+
+tofu -chdir="$ROOT/infrastructure/opentofu-runner" init -input=false -backend-config="$GENERATED/runner-backend.hcl" >/dev/null
+if ! tofu -chdir="$ROOT/infrastructure/opentofu-runner" destroy -auto-approve -input=false; then
+  echo "Initial runner destroy failed; cleaning cloud orphans before one required retry." >&2
+  delete_runner_orphans
+  tofu -chdir="$ROOT/infrastructure/opentofu-runner" destroy -auto-approve -input=false
+fi
+
+progress 88 "Cleaning any runner resources orphaned by an interrupted destroy"
 delete_runner_orphans
 
 progress 95 "Verifying that no managed Scaleway resources remain"
@@ -168,11 +192,10 @@ verify_destroyed
 
 gh variable delete RUNNER_CIDR --repo "$GITHUB_REPOSITORY" --env production 2>/dev/null || true
 
-# The state backend is intentionally the last resource removed. Normal deploys,
-# plans and application-only destroys reuse it; only destroy-all removes it.
-# Never remove it unless every managed cloud resource has been verified absent.
+# The state backend is intentionally the final cloud resource removed. Never
+# remove it until every managed compute/network resource has been verified gone.
 progress 98 "Deleting remote state backend"
 "$ROOT/scripts/delete-state.sh"
 
 progress 100 "Destroy complete"
-echo "Full platform destroyed, including the Scaleway Object Storage state backend."
+echo "Full platform destroyed, including runner and Scaleway Object Storage state backend."

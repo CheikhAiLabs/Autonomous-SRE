@@ -13,11 +13,22 @@ progress 10 "Preparing GitHub repository"
 load_config
 require_repo
 
+# A previous interrupted teardown must never leave workflows targeting a runner
+# that no longer exists. GitHub-hosted remains the fallback until bootstrap has
+# positively confirmed the dedicated runner is online.
+gh variable set RUNNER_ONLINE --repo "$GITHUB_REPOSITORY" --body "false"
+gh variable delete CI_RUNNER --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+
 progress 20 "Preparing Scaleway Object Storage remote state"
 "$ROOT/scripts/bootstrap-state.sh"
 
 progress 40 "Provisioning and registering Scaleway GitHub runner"
 "$ROOT/scripts/bootstrap-runner.sh"
+
+# bootstrap-runner still writes the legacy CI_RUNNER variable for compatibility;
+# the new lifecycle uses only RUNNER_ONLINE, so remove the obsolete selector.
+gh variable delete CI_RUNNER --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+gh variable set RUNNER_ONLINE --repo "$GITHUB_REPOSITORY" --body "true"
 
 progress 55 "Building, scanning, signing and publishing application images"
 run_workflow_and_wait build.yml
