@@ -16,10 +16,6 @@ export TF_VAR_operator_cidr="$OPERATOR_CIDR" TF_VAR_runner_cidr="$RUNNER_CIDR"
 export TF_VAR_control_plane_type="$CONTROL_PLANE_TYPE" TF_VAR_worker_type="$WORKER_TYPE" TF_VAR_worker_count="$WORKER_COUNT"
 export TF_VAR_runner_type="$RUNNER_TYPE"
 
-scw_json() {
-  scw "$@" -o json
-}
-
 retry() {
   local attempts="$1" delay="$2" try
   shift 2
@@ -35,35 +31,38 @@ retry() {
   return 1
 }
 
+# Scaleway CLI 2.58.x renders list commands as deterministic tables where
+# the first two columns are ID and NAME. Using that native output avoids
+# depending on JSON envelope shapes that differ across CLI/API versions.
 managed_server_ids() {
-  scw_json instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
-    | jq -r '(.servers // .)[]? | select((.name // "") == "autonomous-sre-cp-01" or ((.name // "") | startswith("autonomous-sre-worker-")) or (.name // "") == "autonomous-sre-runner-01") | .id'
+  scw instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
+    | awk 'NR > 1 && ($2 == "autonomous-sre-cp-01" || $2 ~ /^autonomous-sre-worker-/ || $2 == "autonomous-sre-runner-01") {print $1}'
 }
 
 platform_server_ids() {
-  scw_json instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
-    | jq -r '(.servers // .)[]? | select((.name // "") == "autonomous-sre-cp-01" or ((.name // "") | startswith("autonomous-sre-worker-"))) | .id'
+  scw instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
+    | awk 'NR > 1 && ($2 == "autonomous-sre-cp-01" || $2 ~ /^autonomous-sre-worker-/) {print $1}'
 }
 
 runner_server_ids() {
-  scw_json instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
-    | jq -r '(.servers // .)[]? | select((.name // "") == "autonomous-sre-runner-01") | .id'
+  scw instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
+    | awk 'NR > 1 && $2 == "autonomous-sre-runner-01" {print $1}'
 }
 
 security_group_ids() {
   local name="$1"
-  scw_json instance security-group list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" name="$name" \
-    | jq -r --arg name "$name" '(.security_groups // .)[]? | select((.name // "") == $name) | .id'
+  scw instance security-group list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
+    | awk -v name="$name" 'NR > 1 && $2 == name {print $1}'
 }
 
 private_network_ids() {
-  scw_json vpc private-network list project-id="$SCW_PROJECT_ID" region="$SCW_REGION" \
-    | jq -r '(.private_networks // .)[]? | select((.name // "") == "autonomous-sre-cluster") | .id'
+  scw vpc private-network list project-id="$SCW_PROJECT_ID" region="$SCW_REGION" \
+    | awk 'NR > 1 && $2 == "autonomous-sre-cluster" {print $1}'
 }
 
 vpc_ids() {
-  scw_json vpc vpc list project-id="$SCW_PROJECT_ID" region="$SCW_REGION" \
-    | jq -r '(.vpcs // .)[]? | select((.name // "") == "autonomous-sre-vpc") | .id'
+  scw vpc vpc list project-id="$SCW_PROJECT_ID" region="$SCW_REGION" \
+    | awk 'NR > 1 && $2 == "autonomous-sre-vpc" {print $1}'
 }
 
 delete_servers() {
@@ -87,9 +86,6 @@ delete_named_security_groups() {
 delete_platform_network_orphans() {
   local id
 
-  # Scaleway may reject Private NIC removal while the Instance is still
-  # attached. Deleting the managed Instances first removes those attachments
-  # and allows the network cleanup to complete deterministically.
   delete_servers < <(platform_server_ids)
   sleep 3
 
