@@ -112,20 +112,20 @@ run_workflow_and_wait() {
 }
 
 wait_for_production_deployment() {
-  local title run_id attempt
+  local run_id attempt
   : "${WORKFLOW_RUN_ID:?A completed build run is required}"
   : "${WORKFLOW_RUN_SHA:?The completed build commit is required}"
-  title="Deploy $WORKFLOW_RUN_SHA (build $WORKFLOW_RUN_ID)"
   run_id=""
   for attempt in $(seq 1 60); do
     wait_progress "Waiting for production deployment of build $WORKFLOW_RUN_ID" "$attempt" 60
-    # A workflow_run execution's headSha belongs to the default branch when
-    # the event fired, not necessarily to the images being deployed. Match the
-    # source build ID and SHA carried in run-name instead of filtering headSha.
+    # Match the immutable source build ID. The deployment workflow may display
+    # the source SHA parsed from the Build Images title while GitHub's own
+    # workflow_run head SHA points at the moving default branch.
     run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yml \
       --branch main --event workflow_run --limit 100 \
       --json databaseId,displayTitle \
-      | jq -r --arg title "$title" '[.[] | select(.displayTitle == $title)][0].databaseId // empty')"
+      | jq -r --arg build "$WORKFLOW_RUN_ID" \
+        '[.[] | select(.displayTitle | endswith("(build " + $build + ")"))][0].databaseId // empty')"
     if [ -n "$run_id" ]; then
       break
     fi
