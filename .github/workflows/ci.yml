@@ -9,8 +9,9 @@ on:
 permissions:
   contents: read
 
-# Keep validation independent from GitHub-hosted runner availability. The
-# project already maintains a dedicated runner with private production access.
+# CI_RUNNER is set to the dedicated Scaleway runner while it exists and switched
+# back to ubuntu-latest before that runner is destroyed. If the variable is
+# missing, GitHub-hosted is the safe bootstrap/fallback path.
 concurrency:
   group: ci-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
@@ -18,7 +19,7 @@ concurrency:
 jobs:
   quality:
     name: Code and policy quality
-    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -74,7 +75,7 @@ jobs:
 
   opentofu:
     name: OpenTofu validation
-    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
       matrix:
         stack: [opentofu-runner, opentofu-platform]
@@ -93,7 +94,7 @@ jobs:
 
   dashboard:
     name: Dashboard build
-    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6

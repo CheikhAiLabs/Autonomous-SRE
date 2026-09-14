@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   filesystem:
-    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
