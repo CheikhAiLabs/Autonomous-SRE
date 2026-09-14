@@ -26,7 +26,7 @@ env:
 jobs:
   destroy:
     if: inputs.confirmation == 'DESTROY'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNER_ONLINE == 'true' && 'autonomous-sre' || 'ubuntu-latest' }}
     environment: production
     concurrency: autonomous-sre-production
     steps:
