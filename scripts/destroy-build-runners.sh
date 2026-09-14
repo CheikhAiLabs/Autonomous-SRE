@@ -28,7 +28,21 @@ if [ -n "$ADMIN_TOKEN" ]; then
       done
 fi
 
-"$ROOT/scripts/bootstrap-state.sh" >/dev/null
+BUCKET="${STATE_BUCKET:-cheikhailabs-autonomous-sre-tfstate-${SCW_PROJECT_ID:0:13}}"
+ENDPOINT="https://s3.${SCW_REGION}.scw.cloud"
+mkdir -p "$GENERATED"
+cat > "$GENERATED/build-runners-backend.hcl" <<EOF
+bucket = "$BUCKET"
+key    = "build-runners/terraform.tfstate"
+region = "$SCW_REGION"
+endpoints = {
+  s3 = "$ENDPOINT"
+}
+use_lockfile                 = true
+skip_credentials_validation = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
+EOF
 
 export TF_VAR_project_id="$SCW_PROJECT_ID"
 export TF_VAR_region="$SCW_REGION"
@@ -37,10 +51,34 @@ export TF_VAR_manager_cidr="${RUNNER_CIDR:-$OPERATOR_CIDR}"
 export TF_VAR_runner_type="${BUILD_RUNNER_TYPE:-DEV1-M}"
 export TF_VAR_runner_count="${BUILD_RUNNER_COUNT:-3}"
 
+build_server_ids() {
+  scw instance server list project-id="$SCW_PROJECT_ID" zone="$SCW_ZONE" \
+    | awk 'NR > 1 && $2 ~ /^autonomous-sre-build-[0-9]+$/ {print $1}'
+}
+
+delete_orphan_servers() {
+  local id
+  while read -r id; do
+    [ -n "$id" ] || continue
+    scw instance server delete "$id" zone="$SCW_ZONE" force-shutdown=true with-volumes=all with-ip=true || true
+  done < <(build_server_ids)
+}
+
 tofu -chdir="$ROOT/infrastructure/opentofu-build-runners" init \
   -input=false \
   -backend-config="$GENERATED/build-runners-backend.hcl" >/dev/null
 
-tofu -chdir="$ROOT/infrastructure/opentofu-build-runners" destroy -input=false -auto-approve
+if ! tofu -chdir="$ROOT/infrastructure/opentofu-build-runners" destroy -input=false -auto-approve; then
+  echo "Initial build runner pool destroy failed; removing orphan instances before retry." >&2
+  delete_orphan_servers
+  tofu -chdir="$ROOT/infrastructure/opentofu-build-runners" destroy -input=false -auto-approve
+fi
+
+delete_orphan_servers
+
+if [ -n "$(build_server_ids)" ]; then
+  echo "Build runner instances still exist after teardown." >&2
+  exit 1
+fi
 
 echo "Ephemeral build runner pool destroyed."
