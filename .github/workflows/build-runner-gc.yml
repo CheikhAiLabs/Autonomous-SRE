@@ -1,0 +1,86 @@
+name: Build Runner GC
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    if: vars.RUNNER_ONLINE == 'true'
+    runs-on: autonomous-sre
+    environment: production
+    concurrency: autonomous-sre-build-pool
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: opentofu/setup-opentofu@v2.0.2
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+
+      - name: Remove build pool after 15 minutes idle
+        shell: bash
+        env:
+          SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+          SCW_REGION: ${{ vars.SCW_REGION }}
+          SCW_ZONE: ${{ vars.SCW_ZONE }}
+          RUNNER_CIDR: ${{ vars.RUNNER_CIDR }}
+          RUNNER_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+          BUILD_RUNNER_COUNT: '3'
+          BUILD_RUNNER_TYPE: DEV1-M
+          BUILD_RUNNER_TTL_SECONDS: '900'
+        run: |
+          set -Eeuo pipefail
+          state_file="$HOME/.autonomous-sre/build-pool.state"
+          [ -f "$state_file" ] || { echo "No build pool state; nothing to do."; exit 0; }
+          read -r state timestamp < "$state_file"
+          now="$(date +%s)"
+          age=$(( now - timestamp ))
+
+          if [ "$state" = "active" ]; then
+            echo "Build pool is active; keeping it."
+            exit 0
+          fi
+          if [ "$state" = "absent" ]; then
+            echo "Build pool already absent."
+            exit 0
+          fi
+          if [ "$state" = "idle" ] && [ "$age" -lt "$BUILD_RUNNER_TTL_SECONDS" ]; then
+            echo "Build pool idle for ${age}s; keeping it until ${BUILD_RUNNER_TTL_SECONDS}s."
+            exit 0
+          fi
+
+          mkdir -p config
+          cat > config/project.env <<EOF
+          SCW_PROJECT_ID=$SCW_PROJECT_ID
+          SCW_REGION=$SCW_REGION
+          SCW_ZONE=$SCW_ZONE
+          OPERATOR_CIDR=$RUNNER_CIDR
+          ALERT_EMAIL=${{ vars.ALERT_EMAIL }}
+          GITHUB_REPOSITORY=${{ github.repository }}
+          CONTROL_PLANE_TYPE=${{ vars.CONTROL_PLANE_TYPE }}
+          WORKER_TYPE=${{ vars.WORKER_TYPE }}
+          WORKER_COUNT=${{ vars.WORKER_COUNT }}
+          RUNNER_TYPE=DEV1-S
+          AUTO_REMEDIATION_MODE=${{ vars.AUTO_REMEDIATION_MODE }}
+          OLLAMA_MODEL=${{ vars.OLLAMA_MODEL }}
+          SMTP_SMARTHOST=${{ vars.SMTP_SMARTHOST }}
+          SMTP_USERNAME=${{ vars.SMTP_USERNAME }}
+          LETSENCRYPT_EMAIL=${{ vars.LETSENCRYPT_EMAIL }}
+          EOF
+          cat > config/secrets.env <<EOF
+          SMTP_PASSWORD=
+          APPROVAL_SIGNING_KEY=not-used-during-build-pool-gc
+          POSTGRES_PASSWORD=not-used-during-build-pool-gc
+          GHCR_PULL_TOKEN=
+          EOF
+          chmod 0600 config/secrets.env
+
+          ./scripts/destroy-build-runners.sh
+          printf 'absent %s\n' "$now" > "$state_file"
