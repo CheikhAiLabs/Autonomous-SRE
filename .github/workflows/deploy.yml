@@ -23,7 +23,10 @@ jobs:
   deploy:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'workflow_dispatch' && vars.AUTOMATIC_DEPLOY == 'true')
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'workflow_dispatch' &&
+       vars.AUTOMATIC_DEPLOY == 'true' &&
+       vars.RUNNER_CIDR != '')
     runs-on: [self-hosted, linux, x64, autonomous-sre]
     environment: production
     timeout-minutes: 90
