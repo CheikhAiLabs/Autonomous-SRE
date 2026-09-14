@@ -18,8 +18,9 @@ concurrency:
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    if: >-
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ${{ vars.RUNNER_ONLINE == 'true' && 'autonomous-sre' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       max-parallel: 1
