@@ -24,6 +24,8 @@ jobs:
     runs-on: ${{ vars.RUNNER_ONLINE == 'true' && 'autonomous-sre' || 'ubuntu-latest' }}
     environment: production
     concurrency: autonomous-sre-build-pool
+    outputs:
+      pool_ready: ${{ steps.pool.outputs.pool_ready }}
     steps:
       - uses: actions/checkout@v7
 
@@ -34,6 +36,7 @@ jobs:
           tofu_wrapper: false
 
       - name: Provision or reuse Scaleway build runners
+        id: pool
         if: vars.RUNNER_ONLINE == 'true'
         shell: bash
         env:
@@ -49,6 +52,12 @@ jobs:
           BUILD_RUNNER_TYPE: DEV1-M
         run: |
           set -Eeuo pipefail
+          if [ -z "${RUNNER_ADMIN_TOKEN:-}" ] || [ -z "${DEPLOY_SSH_PRIVATE_KEY:-}" ]; then
+            echo "::warning::Ephemeral build-runner credentials are not configured yet; using the primary runner for this build."
+            echo "pool_ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           mkdir -p config
           cat > config/project.env <<EOF
           SCW_PROJECT_ID=$SCW_PROJECT_ID
@@ -74,16 +83,27 @@ jobs:
           GHCR_PULL_TOKEN=
           EOF
           chmod 0600 config/secrets.env
-          ./scripts/ensure-build-runners.sh
+
+          if ./scripts/ensure-build-runners.sh; then
+            echo "pool_ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Ephemeral build-runner provisioning failed; cleaning partial pool and falling back to the primary runner."
+            ./scripts/destroy-build-runners.sh || true
+            echo "pool_ready=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: GitHub-hosted fallback
         if: vars.RUNNER_ONLINE != 'true'
         run: echo "Dedicated runner is absent; image builds will use GitHub-hosted runners."
 
+      - name: Primary-runner fallback
+        if: vars.RUNNER_ONLINE == 'true' && steps.pool.outputs.pool_ready != 'true'
+        run: echo "Ephemeral build pool is unavailable; image builds will use the primary Scaleway runner."
+
   build:
     name: build (${{ matrix.name }}, ${{ matrix.dockerfile }})
     needs: prepare-pool
-    runs-on: ${{ vars.RUNNER_ONLINE == 'true' && 'autonomous-sre-build' || 'ubuntu-latest' }}
+    runs-on: ${{ needs.prepare-pool.outputs.pool_ready == 'true' && 'autonomous-sre-build' || (vars.RUNNER_ONLINE == 'true' && 'autonomous-sre' || 'ubuntu-latest') }}
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -221,7 +241,7 @@ jobs:
 
   finalize-pool:
     name: Mark build runner pool idle
-    if: always() && vars.RUNNER_ONLINE == 'true'
+    if: always() && vars.RUNNER_ONLINE == 'true' && needs.prepare-pool.outputs.pool_ready == 'true'
     needs: [prepare-pool, build]
     runs-on: autonomous-sre
     steps:
