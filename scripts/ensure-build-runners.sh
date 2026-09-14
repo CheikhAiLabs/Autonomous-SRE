@@ -14,9 +14,24 @@ BUILD_RUNNER_COUNT="${BUILD_RUNNER_COUNT:-3}"
 BUILD_RUNNER_TYPE="${BUILD_RUNNER_TYPE:-DEV1-M}"
 POOL_DIR="$HOME/.autonomous-sre"
 RUNNER_TEMP="${RUNNER_TEMP:-/tmp}"
+BUCKET="${STATE_BUCKET:-cheikhailabs-autonomous-sre-tfstate-${SCW_PROJECT_ID:0:13}}"
+ENDPOINT="https://s3.${SCW_REGION}.scw.cloud"
 
-mkdir -p "$POOL_DIR"
+mkdir -p "$POOL_DIR" "$GENERATED"
 printf 'active %s\n' "$(date +%s)" > "$POOL_DIR/build-pool.state"
+
+cat > "$GENERATED/build-runners-backend.hcl" <<EOF
+bucket = "$BUCKET"
+key    = "build-runners/terraform.tfstate"
+region = "$SCW_REGION"
+endpoints = {
+  s3 = "$ENDPOINT"
+}
+use_lockfile                 = true
+skip_credentials_validation = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
+EOF
 
 api() {
   curl -fsSL \
@@ -35,8 +50,6 @@ if [ "$(online_count)" -ge "$BUILD_RUNNER_COUNT" ]; then
   echo "Build runner pool already online; reusing it."
   exit 0
 fi
-
-"$ROOT/scripts/bootstrap-state.sh" >/dev/null
 
 export TF_VAR_project_id="$SCW_PROJECT_ID"
 export TF_VAR_region="$SCW_REGION"
