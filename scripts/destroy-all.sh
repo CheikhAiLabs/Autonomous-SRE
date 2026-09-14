@@ -135,12 +135,7 @@ verify_destroyed() {
   }
 }
 
-RUNNER_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '.runners[] | select(.name=="autonomous-sre-scaleway-01") | .id' 2>/dev/null || true)"
-if [ -n "$RUNNER_ID" ]; then
-  echo "Deregistering GitHub Actions runner..."
-  gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/runners/$RUNNER_ID" >/dev/null
-fi
-
+# Lifecycle invariant: runner first on deploy, runner last on destroy.
 progress 10 "Removing Kubernetes Instances before Private NIC cleanup"
 delete_servers < <(platform_server_ids)
 
@@ -151,10 +146,14 @@ tofu -chdir="$ROOT/infrastructure/opentofu-platform" destroy -auto-approve -inpu
 progress 50 "Cleaning any platform resources orphaned by a previous interrupted destroy"
 delete_platform_network_orphans
 
-progress 65 "Removing runner Instance before state cleanup"
-delete_servers < <(runner_server_ids)
+progress 65 "Deregistering GitHub Actions runner after platform teardown"
+RUNNER_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '.runners[] | select(.name=="autonomous-sre-scaleway-01") | .id' 2>/dev/null || true)"
+if [ -n "$RUNNER_ID" ]; then
+  gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/runners/$RUNNER_ID" >/dev/null
+fi
 
-progress 75 "Destroying runner state-managed resources"
+progress 75 "Destroying runner last"
+delete_servers < <(runner_server_ids)
 tofu -chdir="$ROOT/infrastructure/opentofu-runner" init -input=false -backend-config="$GENERATED/runner-backend.hcl" >/dev/null
 tofu -chdir="$ROOT/infrastructure/opentofu-runner" destroy -auto-approve -input=false
 
