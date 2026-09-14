@@ -53,6 +53,7 @@ EOF
 }
 
 generate_backend "runner/terraform.tfstate" "$GENERATED/runner-backend.hcl"
+generate_backend "build-runners/terraform.tfstate" "$GENERATED/build-runners-backend.hcl"
 generate_backend "platform/terraform.tfstate" "$GENERATED/platform-backend.hcl"
 echo "$BUCKET" > "$GENERATED/state-bucket"
 

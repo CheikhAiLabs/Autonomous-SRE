@@ -78,7 +78,7 @@ jobs:
     runs-on: ${{ vars.RUNNER_ONLINE == 'true' && 'autonomous-sre' || 'ubuntu-latest' }}
     strategy:
       matrix:
-        stack: [opentofu-runner, opentofu-platform]
+        stack: [opentofu-runner, opentofu-build-runners, opentofu-platform]
     steps:
       - uses: actions/checkout@v7
       - uses: opentofu/setup-opentofu@v2.0.2

@@ -17,13 +17,76 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  prepare-pool:
+    name: Prepare build runner pool
     if: >-
       (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
     runs-on: ${{ vars.RUNNER_ONLINE == 'true' && 'autonomous-sre' || 'ubuntu-latest' }}
+    environment: production
+    concurrency: autonomous-sre-build-pool
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: opentofu/setup-opentofu@v2.0.2
+        if: vars.RUNNER_ONLINE == 'true'
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+
+      - name: Provision or reuse Scaleway build runners
+        if: vars.RUNNER_ONLINE == 'true'
+        shell: bash
+        env:
+          SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID }}
+          SCW_REGION: ${{ vars.SCW_REGION }}
+          SCW_ZONE: ${{ vars.SCW_ZONE }}
+          RUNNER_CIDR: ${{ vars.RUNNER_CIDR }}
+          RUNNER_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          BUILD_RUNNER_COUNT: '3'
+          BUILD_RUNNER_TYPE: DEV1-M
+        run: |
+          set -Eeuo pipefail
+          mkdir -p config
+          cat > config/project.env <<EOF
+          SCW_PROJECT_ID=$SCW_PROJECT_ID
+          SCW_REGION=$SCW_REGION
+          SCW_ZONE=$SCW_ZONE
+          OPERATOR_CIDR=$RUNNER_CIDR
+          ALERT_EMAIL=${{ vars.ALERT_EMAIL }}
+          GITHUB_REPOSITORY=${{ github.repository }}
+          CONTROL_PLANE_TYPE=${{ vars.CONTROL_PLANE_TYPE }}
+          WORKER_TYPE=${{ vars.WORKER_TYPE }}
+          WORKER_COUNT=${{ vars.WORKER_COUNT }}
+          RUNNER_TYPE=DEV1-S
+          AUTO_REMEDIATION_MODE=${{ vars.AUTO_REMEDIATION_MODE }}
+          OLLAMA_MODEL=${{ vars.OLLAMA_MODEL }}
+          SMTP_SMARTHOST=${{ vars.SMTP_SMARTHOST }}
+          SMTP_USERNAME=${{ vars.SMTP_USERNAME }}
+          LETSENCRYPT_EMAIL=${{ vars.LETSENCRYPT_EMAIL }}
+          EOF
+          cat > config/secrets.env <<EOF
+          SMTP_PASSWORD=
+          APPROVAL_SIGNING_KEY=not-used-during-build-pool
+          POSTGRES_PASSWORD=not-used-during-build-pool
+          GHCR_PULL_TOKEN=
+          EOF
+          chmod 0600 config/secrets.env
+          ./scripts/ensure-build-runners.sh
+
+      - name: GitHub-hosted fallback
+        if: vars.RUNNER_ONLINE != 'true'
+        run: echo "Dedicated runner is absent; image builds will use GitHub-hosted runners."
+
+  build:
+    name: build (${{ matrix.name }}, ${{ matrix.dockerfile }})
+    needs: prepare-pool
+    runs-on: ${{ vars.RUNNER_ONLINE == 'true' && 'autonomous-sre-build' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 3
       matrix:
         include:
           - name: sre-api
@@ -126,7 +189,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bin"
           asset="cosign-linux-amd64"
           base="https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}"
-
           download_ok=false
           for attempt in $(seq 1 10); do
             echo "Cosign fallback download attempt ${attempt}/10"
@@ -144,12 +206,10 @@ jobs:
             fi
             sleep $((attempt * 2))
           done
-
           if [ "$download_ok" != true ]; then
             echo "Release download unavailable; falling back to verified Go module installation."
             GOBIN="$RUNNER_TEMP/bin" go install github.com/sigstore/cosign/v3/cmd/cosign@${COSIGN_VERSION}
           fi
-
           "$RUNNER_TEMP/bin/cosign" version
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
@@ -158,3 +218,12 @@ jobs:
           IMAGE: ${{ steps.meta.outputs.image }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "$IMAGE@$DIGEST"
+
+  finalize-pool:
+    name: Mark build runner pool idle
+    if: always() && vars.RUNNER_ONLINE == 'true'
+    needs: [prepare-pool, build]
+    runs-on: autonomous-sre
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./scripts/finalize-build-runners.sh

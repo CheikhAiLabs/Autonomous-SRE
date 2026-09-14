@@ -12,6 +12,7 @@ if [ "$RUNNER_STATUS" != "online" ]; then
   exit 1
 fi
 
+"$ROOT/scripts/configure-build-runner-admin.sh"
 gh variable delete CI_RUNNER --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
 gh variable set RUNNER_ONLINE --repo "$GITHUB_REPOSITORY" --body "true"
 gh variable set AUTOMATIC_DEPLOY --repo "$GITHUB_REPOSITORY" --body "true"

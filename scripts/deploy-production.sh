@@ -124,7 +124,21 @@ recover_stale_tofu_lock() {
   tofu -chdir="$ROOT/infrastructure/opentofu-platform" force-unlock -force "$lock_id"
 }
 
+recover_missing_cni() {
+  local log_file="$1"
+
+  [ -s "$KUBECONFIG" ] || return 1
+  if ! grep -Eq 'NetworkPluginNotReady|cni plugin not initialized|container runtime network not ready' "$log_file"; then
+    return 1
+  fi
+
+  echo "Detected a K3s cluster blocked before Cilium initialization."
+  echo "Reconciling Cilium first, then retrying the idempotent production deployment."
+  "$ROOT/scripts/ensure-cilium-network.sh"
+}
+
 DEPLOY_LOG="$GENERATED/deploy-ci.log"
+LAST_DEPLOY_LOG="$DEPLOY_LOG"
 first_rc=0
 run_deploy "$DEPLOY_LOG" || first_rc=$?
 if [ "$first_rc" -eq 0 ]; then
@@ -133,15 +147,26 @@ fi
 
 if recover_stale_tofu_lock "$DEPLOY_LOG"; then
   echo "Stale OpenTofu lock released. Retrying the production deployment once."
+  LAST_DEPLOY_LOG="$GENERATED/deploy-ci-after-unlock.log"
   retry_rc=0
-  run_deploy "$GENERATED/deploy-ci-after-unlock.log" || retry_rc=$?
+  run_deploy "$LAST_DEPLOY_LOG" || retry_rc=$?
   if [ "$retry_rc" -eq 0 ]; then
     exit 0
   fi
   first_rc=$retry_rc
 fi
 
-echo "Initial deployment attempt failed. Checking whether the failure is caused by an unreachable worker."
+if recover_missing_cni "$LAST_DEPLOY_LOG"; then
+  LAST_DEPLOY_LOG="$GENERATED/deploy-ci-after-cni-recovery.log"
+  retry_rc=0
+  run_deploy "$LAST_DEPLOY_LOG" || retry_rc=$?
+  if [ "$retry_rc" -eq 0 ]; then
+    exit 0
+  fi
+  first_rc=$retry_rc
+fi
+
+echo "Deployment still failed after bounded automatic recovery. Checking for an unreachable worker."
 
 if [ ! -s "$KUBECONFIG" ] || [ ! -s "$GENERATED/inventory.ini" ]; then
   echo "Deployment failed before Kubernetes recovery data was available; not retrying blindly." >&2
@@ -161,7 +186,7 @@ mapfile -t stale_workers < <(
 )
 
 if [ "${#stale_workers[@]}" -eq 0 ]; then
-  echo "The deployment failure is not an unreachable-worker condition; preserving the original failure." >&2
+  echo "The remaining deployment failure is not an unreachable-worker condition; preserving the original failure." >&2
   exit "$first_rc"
 fi
 
