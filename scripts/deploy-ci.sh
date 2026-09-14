@@ -141,7 +141,7 @@ dump_worker_agent_diagnostics() {
     -i "$GENERATED/inventory.ini" \
     -T 10 \
     -m ansible.builtin.shell \
-    -a 'set -o pipefail; systemctl status k3s-agent --no-pager -l || true; echo "--- journal ---"; journalctl -u k3s-agent -n 200 --no-pager || true; echo "--- resources ---"; df -h; free -m; echo "--- routes ---"; ip route' >&2 || true
+    -a 'systemctl status k3s-agent --no-pager -l || true; echo "--- journal ---"; journalctl -u k3s-agent -n 200 --no-pager || true; echo "--- resources ---"; df -h; free -m; echo "--- routes ---"; ip route' >&2 || true
   kubectl describe node "$node" >&2 || true
   kubectl -n kube-system get pods -l k8s-app=cilium -o wide >&2 || true
   kubectl get events -A --sort-by=.lastTimestamp | tail -n 80 >&2 || true
@@ -288,9 +288,16 @@ if [ ! -s "$KUBECONFIG" ]; then
 fi
 kubectl cluster-info >/dev/null
 
+# K3s is intentionally installed without Flannel or kube-proxy. Cilium is
+# therefore a cluster bootstrap prerequisite, not a later platform add-on.
+# Reconcile it before evaluating node readiness so a fresh or partially
+# configured cluster does not fail simply because its CNI is not initialized.
+progress 70 "Ensuring Cilium cluster networking"
+"$ROOT/scripts/ensure-cilium-network.sh"
+
 # Reuse a matching cluster instead of reinstalling K3s on every deployment.
-# When a worker has stopped posting status, repair its k3s-agent over SSH first;
-# only use a Cilium recycle for a node whose kubelet is still reachable.
+# If a node remains non-ready after Cilium is healthy, apply bounded host-level
+# recovery only to the affected node.
 repair_not_ready_nodes
 
 progress 75 "Installing platform services"
