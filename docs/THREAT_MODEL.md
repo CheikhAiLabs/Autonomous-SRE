@@ -29,7 +29,7 @@ The emailed link only opens the review page. A state-changing POST with the shor
 
 ### CI compromise
 
-Production secrets are scoped to the GitHub `production` environment. Builds run on GitHub-hosted runners; infrastructure deployment runs on a dedicated Scaleway self-hosted runner.
+Production secrets are scoped to the GitHub `production` environment. Image builds use the ephemeral Scaleway `autonomous-sre-build` runner pool when it is available, with the configured runner fallback otherwise. Infrastructure deployment runs on the dedicated persistent Scaleway self-hosted runner.
 
 ### Cluster-wide outage
 

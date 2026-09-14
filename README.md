@@ -602,7 +602,7 @@ GitHub Actions validates the project before production deployment.
 flowchart LR
     Commit[Commit / PR]
     CI[CI\nRuff · Pytest · OPA · OpenTofu · Dashboard]
-    Security[Security\nscanning]
+    Security[Security\nparallel scan]
     Build[Build Images\nGHCR · SBOM · signing]
     Deploy[Deploy Production\nself-hosted runner]
     Verify[End-to-end verify]
@@ -610,10 +610,11 @@ flowchart LR
     Commit --> CI
     Commit --> Security
     CI --> Build
-    Security --> Build
     Build --> Deploy
     Deploy --> Verify
 ```
+
+Security runs in parallel with CI. The image build starts from a successful CI run, then production deployment consumes that exact build revision.
 
 Production deploys are serialized so an interrupted OpenTofu apply cannot race another deployment. The deploy scripts also recover known stale infrastructure locks only after confirming that no active apply is running.
 

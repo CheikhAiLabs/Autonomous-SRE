@@ -4,14 +4,21 @@ Autonomous-SRE embeds [Headlamp](https://headlamp.dev/) at `/kubernetes/` to ins
 
 ## Access
 
-Refresh the local kubeconfig, generate an eight-hour login token, then paste the token into Headlamp:
+The protected deployment uses Headlamp's in-cluster ServiceAccount token automatically. No token copy/paste is required.
+
+From the repository root, run:
 
 ```bash
-./scripts/fetch-kubeconfig.sh
-make headlamp-token
+make headlamp
 ```
 
-Open `https://<platform-fqdn>/kubernetes/`.
+The command reads the generated platform FQDN, verifies that the protected route is reachable from the current operator network and opens:
+
+```text
+https://<platform-fqdn>/kubernetes/
+```
+
+If the route is not reachable, check the current public IP, the Scaleway operator CIDR, the Gateway and the HTTPRoute.
 
 ## Permission model
 
@@ -23,4 +30,4 @@ Interactive actions are limited to the `demo` namespace:
 - open a terminal in a demo Pod;
 - update or scale Deployments and StatefulSets.
 
-Headlamp's unsafe ServiceAccount auto-login is disabled. Every browser session must authenticate with a temporary token. Do not replace this role with `cluster-admin`.
+The Headlamp ServiceAccount is deliberately not `cluster-admin`. Access is additionally restricted by the operator-only HTTPS Gateway and Scaleway Security Group.
