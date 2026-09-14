@@ -9,9 +9,9 @@ on:
 permissions:
   contents: read
 
-# CI must remain available even when the Scaleway runner has intentionally been
-# destroyed. Production deployment is the only workflow that requires private
-# access through the dedicated self-hosted runner.
+# CI_RUNNER is set to the dedicated Scaleway runner while it exists and switched
+# back to ubuntu-latest before that runner is destroyed. If the variable is
+# missing, GitHub-hosted is the safe bootstrap/fallback path.
 concurrency:
   group: ci-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
@@ -19,7 +19,7 @@ concurrency:
 jobs:
   quality:
     name: Code and policy quality
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -75,7 +75,7 @@ jobs:
 
   opentofu:
     name: OpenTofu validation
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     strategy:
       matrix:
         stack: [opentofu-runner, opentofu-platform]
@@ -94,7 +94,7 @@ jobs:
 
   dashboard:
     name: Dashboard build
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
