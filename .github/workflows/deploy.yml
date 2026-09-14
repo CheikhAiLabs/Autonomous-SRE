@@ -1,4 +1,5 @@
 name: Deploy Production
+run-name: Deploy ${{ github.event.workflow_run.head_sha || github.sha }} (build ${{ github.event.workflow_run.id || 'manual' }})
 
 on:
   workflow_dispatch:
@@ -25,7 +26,6 @@ jobs:
       vars.RUNNER_ONLINE == 'true' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event != 'workflow_dispatch' &&
         vars.AUTOMATIC_DEPLOY == 'true'))
     runs-on: [self-hosted, linux, x64, autonomous-sre]
     environment: production

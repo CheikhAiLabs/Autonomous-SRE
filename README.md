@@ -617,6 +617,8 @@ flowchart LR
 
 Production deploys are serialized so an interrupted OpenTofu apply cannot race another deployment. The deploy scripts also recover known stale infrastructure locks only after confirming that no active apply is running.
 
+When `AUTOMATIC_DEPLOY=true`, every successful `Build Images` run on `main`, including a manual build, triggers production deployment of that build's exact commit. `make deploy` and `make deploy-all` correlate their build by a unique request ID, then wait for its linked production run instead of dispatching a second deployment against a potentially newer `main`.
+
 Container images are built in CI, scanned, accompanied by SBOM metadata and signed with Cosign in the supply-chain workflow.
 
 ---

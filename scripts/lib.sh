@@ -85,21 +85,54 @@ require_repo() {
 }
 
 run_workflow_and_wait() {
-  local workflow="$1"
-  local previous_id run_id attempt
-  previous_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)"
-  echo "Dispatching $workflow..."
-  gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref main
+  local workflow="$1" request_id attempt run_id
+  request_id="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+  echo "Dispatching $workflow (request $request_id)..."
+  gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" --ref main \
+    -f "request_id=$request_id"
   run_id=""
   for attempt in $(seq 1 30); do
     wait_progress "Waiting for $workflow run" "$attempt" 30
-    run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)"
-    if [ -n "$run_id" ] && [ "$run_id" != "$previous_id" ]; then
-      [ -t 1 ] && printf '\n' || true
+    run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" \
+      --branch main --event workflow_dispatch --limit 100 \
+      --json databaseId,displayTitle \
+      | jq -r --arg request "$request_id" \
+        '[.[] | select(.displayTitle | endswith("(" + $request + ")"))][0].databaseId // empty')"
+    if [ -n "$run_id" ]; then
       break
     fi
     sleep 2
   done
-  [ -n "$run_id" ] && [ "$run_id" != "$previous_id" ] || { echo "Could not find new workflow run for $workflow" >&2; exit 1; }
-  gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+  [ -n "$run_id" ] || { echo "Could not find $workflow request $request_id" >&2; return 1; }
+  gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status || return 1
+  [ "$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json conclusion --jq .conclusion)" = "success" ] \
+    || { echo "$workflow run $run_id did not succeed." >&2; return 1; }
+  WORKFLOW_RUN_ID="$run_id"
+  WORKFLOW_RUN_SHA="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)"
+}
+
+wait_for_production_deployment() {
+  local title run_id attempt
+  : "${WORKFLOW_RUN_ID:?A completed build run is required}"
+  : "${WORKFLOW_RUN_SHA:?The completed build commit is required}"
+  title="Deploy $WORKFLOW_RUN_SHA (build $WORKFLOW_RUN_ID)"
+  run_id=""
+  for attempt in $(seq 1 60); do
+    wait_progress "Waiting for production deployment of build $WORKFLOW_RUN_ID" "$attempt" 60
+    run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yml \
+      --branch main --event workflow_run --commit "$WORKFLOW_RUN_SHA" --limit 100 \
+      --json databaseId,displayTitle \
+      | jq -r --arg title "$title" '[.[] | select(.displayTitle == $title)][0].databaseId // empty')"
+    if [ -n "$run_id" ]; then
+      break
+    fi
+    sleep 5
+  done
+  if [ -z "$run_id" ]; then
+    echo "No production run found for build $WORKFLOW_RUN_ID ($WORKFLOW_RUN_SHA). Check AUTOMATIC_DEPLOY and RUNNER_ONLINE; both must be true." >&2
+    return 1
+  fi
+  gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status || return 1
+  [ "$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json conclusion --jq .conclusion)" = "success" ] \
+    || { echo "Production run $run_id did not succeed." >&2; return 1; }
 }

@@ -18,4 +18,4 @@ gh variable set RUNNER_ONLINE --repo "$GITHUB_REPOSITORY" --body "true"
 gh variable set AUTOMATIC_DEPLOY --repo "$GITHUB_REPOSITORY" --body "true"
 
 run_workflow_and_wait build.yml
-run_workflow_and_wait deploy.yml
+wait_for_production_deployment

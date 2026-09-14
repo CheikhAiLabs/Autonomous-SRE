@@ -36,8 +36,8 @@ gh variable set RUNNER_ONLINE --repo "$GITHUB_REPOSITORY" --body "true"
 progress 55 "Building, scanning, signing and publishing application images"
 run_workflow_and_wait build.yml
 
-progress 65 "Starting production deployment workflow"
-run_workflow_and_wait deploy.yml
+progress 65 "Waiting for production deployment of the completed build"
+wait_for_production_deployment
 
 progress 98 "Reading final platform endpoint"
 load_scw_credentials

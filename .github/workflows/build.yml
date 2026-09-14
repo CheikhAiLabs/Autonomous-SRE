@@ -1,7 +1,13 @@
 name: Build Images
+run-name: Build Images (${{ inputs.request_id || github.event.workflow_run.head_sha || github.sha }})
 
 on:
   workflow_dispatch:
+    inputs:
+      request_id:
+        description: Correlation ID used by the deployment scripts
+        required: false
+        type: string
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -28,6 +34,8 @@ jobs:
       pool_ready: ${{ steps.pool.outputs.pool_ready }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: opentofu/setup-opentofu@v2.0.2
         if: vars.RUNNER_ONLINE == 'true'
