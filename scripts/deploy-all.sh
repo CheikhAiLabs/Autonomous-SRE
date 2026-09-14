@@ -25,6 +25,9 @@ progress 20 "Preparing Scaleway Object Storage remote state"
 progress 40 "Provisioning and registering Scaleway GitHub runner"
 "$ROOT/scripts/bootstrap-runner.sh"
 
+# bootstrap-runner still writes the legacy CI_RUNNER variable for compatibility;
+# the new lifecycle uses only RUNNER_ONLINE, so remove the obsolete selector.
+gh variable delete CI_RUNNER --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
 gh variable set RUNNER_ONLINE --repo "$GITHUB_REPOSITORY" --body "true"
 
 progress 55 "Building, scanning, signing and publishing application images"
