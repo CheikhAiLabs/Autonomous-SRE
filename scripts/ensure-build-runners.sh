@@ -12,10 +12,11 @@ load_scw_credentials
 
 BUILD_RUNNER_COUNT="${BUILD_RUNNER_COUNT:-3}"
 BUILD_RUNNER_TYPE="${BUILD_RUNNER_TYPE:-DEV1-M}"
-POOL_DIR="/var/lib/autonomous-sre"
+POOL_DIR="$HOME/.autonomous-sre"
+RUNNER_TEMP="${RUNNER_TEMP:-/tmp}"
 
-sudo install -d -m 0755 "$POOL_DIR"
-date +%s | sudo tee "$POOL_DIR/build-pool.active" >/dev/null
+mkdir -p "$POOL_DIR"
+printf 'active %s\n' "$(date +%s)" > "$POOL_DIR/build-pool.state"
 
 api() {
   curl -fsSL \
