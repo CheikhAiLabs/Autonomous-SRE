@@ -9,8 +9,9 @@ on:
 permissions:
   contents: read
 
-# Keep validation independent from GitHub-hosted runner availability. The
-# project already maintains a dedicated runner with private production access.
+# CI must remain available even when the Scaleway runner has intentionally been
+# destroyed. Production deployment is the only workflow that requires private
+# access through the dedicated self-hosted runner.
 concurrency:
   group: ci-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
@@ -18,7 +19,7 @@ concurrency:
 jobs:
   quality:
     name: Code and policy quality
-    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
@@ -74,7 +75,7 @@ jobs:
 
   opentofu:
     name: OpenTofu validation
-    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         stack: [opentofu-runner, opentofu-platform]
@@ -93,7 +94,7 @@ jobs:
 
   dashboard:
     name: Dashboard build
-    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
