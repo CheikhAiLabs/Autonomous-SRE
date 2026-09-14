@@ -26,7 +26,7 @@ env:
 jobs:
   destroy:
     if: inputs.confirmation == 'DESTROY'
-    runs-on: [self-hosted, linux, x64, autonomous-sre]
+    runs-on: ubuntu-latest
     environment: production
     concurrency: autonomous-sre-production
     steps:
