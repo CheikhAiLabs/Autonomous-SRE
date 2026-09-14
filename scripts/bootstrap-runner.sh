@@ -132,6 +132,7 @@ gh variable set OLLAMA_MODEL --repo "$GITHUB_REPOSITORY" --env production --body
 gh variable set SMTP_SMARTHOST --repo "$GITHUB_REPOSITORY" --env production --body "$SMTP_SMARTHOST"
 gh variable set SMTP_USERNAME --repo "$GITHUB_REPOSITORY" --env production --body "$SMTP_USERNAME"
 gh variable set LETSENCRYPT_EMAIL --repo "$GITHUB_REPOSITORY" --env production --body "$LETSENCRYPT_EMAIL"
+gh variable set CI_RUNNER --repo "$GITHUB_REPOSITORY" --body "autonomous-sre"
 gh variable set AUTOMATIC_DEPLOY --repo "$GITHUB_REPOSITORY" --body "true"
 
 echo "Runner online target: autonomous-sre-scaleway-01 ($RUNNER_IP)"
