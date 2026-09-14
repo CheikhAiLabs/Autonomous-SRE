@@ -146,6 +146,9 @@ tofu -chdir="$ROOT/infrastructure/opentofu-platform" destroy -auto-approve -inpu
 progress 50 "Cleaning any platform resources orphaned by a previous interrupted destroy"
 delete_platform_network_orphans
 
+progress 62 "Switching CI to GitHub-hosted fallback"
+gh variable set CI_RUNNER --repo "$GITHUB_REPOSITORY" --body "ubuntu-latest"
+
 progress 65 "Deregistering GitHub Actions runner after platform teardown"
 RUNNER_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/runners" --jq '.runners[] | select(.name=="autonomous-sre-scaleway-01") | .id' 2>/dev/null || true)"
 if [ -n "$RUNNER_ID" ]; then
