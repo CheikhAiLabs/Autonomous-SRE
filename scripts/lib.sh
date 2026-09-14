@@ -119,8 +119,11 @@ wait_for_production_deployment() {
   run_id=""
   for attempt in $(seq 1 60); do
     wait_progress "Waiting for production deployment of build $WORKFLOW_RUN_ID" "$attempt" 60
+    # A workflow_run execution's headSha belongs to the default branch when
+    # the event fired, not necessarily to the images being deployed. Match the
+    # source build ID and SHA carried in run-name instead of filtering headSha.
     run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yml \
-      --branch main --event workflow_run --commit "$WORKFLOW_RUN_SHA" --limit 100 \
+      --branch main --event workflow_run --limit 100 \
       --json databaseId,displayTitle \
       | jq -r --arg title "$title" '[.[] | select(.displayTitle == $title)][0].databaseId // empty')"
     if [ -n "$run_id" ]; then

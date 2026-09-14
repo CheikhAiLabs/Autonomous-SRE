@@ -8,7 +8,6 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD_SHA = "a" * 40
 
 GH_STUB = r'''#!/usr/bin/env python3
 import json
@@ -39,6 +38,11 @@ elif args[:2] == ["run", "list"]:
             {"databaseId": 902, "displayTitle": f"Deploy {sha} (build 901)"},
             {"databaseId": 222, "displayTitle": f"Deploy {sha} (build 111)"},
         ]
+        # main advanced while the images built. GitHub records the workflow
+        # execution at the new default-branch commit, independently of its
+        # checked-out deployment/image commit.
+        if "--commit" in args and option("--commit") != "b" * 40:
+            rows = []
     print(json.dumps(rows))
 elif args[:2] == ["run", "watch"]:
     if os.environ.get("MOCK_FAILED_RUN") == args[2]:
@@ -72,7 +76,7 @@ class DeploymentWorkflowTests(unittest.TestCase):
                 [
                     "bash",
                     "-c",
-                    'source "$DEPLOYMENT_LIB"; run_workflow_and_wait build.yml; '
+                    'source "$DEPLOYMENT_LIB"; sleep() { :; }; run_workflow_and_wait build.yml; '
                     "wait_for_production_deployment",
                 ],
                 env=env,
@@ -91,10 +95,6 @@ class DeploymentWorkflowTests(unittest.TestCase):
         self.assertEqual(watched, ["111", "222"])
         dispatched = [call[2] for call in calls if call[:2] == ["workflow", "run"]]
         self.assertEqual(dispatched, ["build.yml"])
-        deployment_query = next(
-            call for call in calls if call[:2] == ["run", "list"] and "deploy.yml" in call
-        )
-        self.assertEqual(deployment_query[deployment_query.index("--commit") + 1], BUILD_SHA)
 
     def test_failed_or_skipped_build_never_proceeds_to_production(self):
         for option in ("MOCK_FAILED_RUN", "MOCK_SKIPPED_RUN"):
