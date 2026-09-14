@@ -68,77 +68,12 @@ jobs:
           set -Eeuo pipefail
           source_sha="$(printf '%s\n' "$BUILD_DISPLAY_TITLE" | grep -Eo '[0-9a-f]{40}' | head -n1 || true)"
           source_sha="${source_sha:-$BUILD_HEAD_SHA}"
-          if ! printf '%s\n' "$source_sha" | grep -Eq '^[0-9a-f]{40}
-        with:
-          tofu_version: 1.12.6
-          tofu_wrapper: false
-
-      - name: Require durable GHCR credentials
-        shell: bash
-        run: |
-          if [ -z "$GHCR_PULL_TOKEN" ]; then
-            echo "::error::The production GHCR_PULL_TOKEN secret is required."
-            echo "::error::Use a durable token with read:packages; github.token expires after the workflow."
-            exit 1
-          fi
-
-      - name: Prepare SSH key and portable config
-        shell: bash
-        env:
-          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
-        run: |
-          install -m 0700 -d "${{ runner.temp }}/ssh"
-          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "${{ runner.temp }}/ssh/deploy_key"
-          chmod 0600 "${{ runner.temp }}/ssh/deploy_key"
-          echo "SSH_PRIVATE_KEY=${{ runner.temp }}/ssh/deploy_key" >> "$GITHUB_ENV"
-          mkdir -p config
-          cat > config/project.env <<EOF
-          SCW_PROJECT_ID=$SCW_PROJECT_ID
-          SCW_REGION=$SCW_REGION
-          SCW_ZONE=$SCW_ZONE
-          OPERATOR_CIDR=$OPERATOR_CIDR
-          ALERT_EMAIL=$ALERT_EMAIL
-          GITHUB_REPOSITORY=$GITHUB_REPOSITORY
-          CONTROL_PLANE_TYPE=$CONTROL_PLANE_TYPE
-          WORKER_TYPE=$WORKER_TYPE
-          WORKER_COUNT=$WORKER_COUNT
-          RUNNER_TYPE=DEV1-S
-          AUTO_REMEDIATION_MODE=$AUTO_REMEDIATION_MODE
-          OLLAMA_MODEL=$OLLAMA_MODEL
-          SMTP_SMARTHOST=$SMTP_SMARTHOST
-          SMTP_USERNAME=$SMTP_USERNAME
-          LETSENCRYPT_EMAIL=$LETSENCRYPT_EMAIL
-          EOF
-          cat > config/secrets.env <<EOF
-          SMTP_PASSWORD=$SMTP_PASSWORD
-          APPROVAL_SIGNING_KEY=$APPROVAL_SIGNING_KEY
-          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-          GHCR_PULL_TOKEN=$GHCR_PULL_TOKEN
-          EOF
-          chmod 0600 config/secrets.env
-
-      - name: Deploy and verify
-        shell: bash
-        run: bash ./scripts/deploy-production.sh
-
-      - name: Publish deployment summary
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo '## Autonomous-SRE production deployment'
-            if [ -f .generated/platform-fqdn ]; then
-              echo "- Dashboard: https://$(cat .generated/platform-fqdn)"
-            fi
-            echo "- Commit: \`${IMAGE_TAG}\`"
-            echo "- Alert recipient: \`${ALERT_EMAIL}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-; then
+          if ! printf '%s\n' "$source_sha" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "::error::Could not resolve the source build commit from '$BUILD_DISPLAY_TITLE'."
             exit 1
           fi
 
-          # workflow_run executions can point at the default branch commit even
+          # workflow_run executions can point at the default-branch commit even
           # when their images came from an earlier source build. Fetch and
           # check out the commit encoded by Build Images before rendering any
           # manifests, then use that same commit as the image tag.
