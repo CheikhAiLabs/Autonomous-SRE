@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Policy-controlled autonomous SRE platform"
 requires-python = ">=3.12"
 dependencies = [
-  "aiosmtplib>=4.0,<5",
+  "aiosmtplib>=4.0,<6",
   "asyncpg>=0.30,<1",
   "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
@@ -17,15 +17,15 @@ dependencies = [
   "pydantic-settings>=2.10,<3",
   "PyYAML>=6.0,<7",
   "sqlalchemy>=2.0.43,<3",
-  "structlog>=25,<26",
+  "structlog>=25,<27",
   "tenacity>=9,<10",
   "uvicorn[standard]>=0.35,<1",
 ]
 
 [dependency-groups]
 dev = [
-  "mypy>=1.17,<2",
-  "pytest>=8.4,<9",
+  "mypy>=1.17,<3",
+  "pytest>=8.4,<10",
   "pytest-asyncio>=1.1,<2",
   "ruff>=0.12,<1",
   "types-PyYAML>=6.0,<7",
